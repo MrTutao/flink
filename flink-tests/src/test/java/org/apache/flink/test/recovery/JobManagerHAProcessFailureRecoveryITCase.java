@@ -135,7 +135,7 @@ public class JobManagerHAProcessFailureRecoveryITCase extends TestLogger {
 		this.executionMode = executionMode;
 	}
 
-	@Parameterized.Parameters
+	@Parameterized.Parameters(name = "ExecutionMode {0}")
 	public static Collection<Object[]> executionMode() {
 		return Arrays.asList(new Object[][]{
 				{ ExecutionMode.PIPELINED},
@@ -393,7 +393,7 @@ public class JobManagerHAProcessFailureRecoveryITCase extends TestLogger {
 	}
 
 	private void waitForTaskManagers(int numberOfTaskManagers, DispatcherGateway dispatcherGateway, FiniteDuration timeLeft) throws ExecutionException, InterruptedException {
-		FutureUtils.retrySuccesfulWithDelay(
+		FutureUtils.retrySuccessfulWithDelay(
 			() -> dispatcherGateway.requestClusterOverview(Time.milliseconds(timeLeft.toMillis())),
 			Time.milliseconds(50L),
 			org.apache.flink.api.common.time.Deadline.fromNow(Duration.ofMillis(timeLeft.toMillis())),

@@ -17,6 +17,8 @@
 # limitations under the License.
 ################################################################################
 
+set -Eeuo pipefail
+
 source "$(dirname "$0")"/common.sh
 
 TEST_PROGRAM_JAR=${END_TO_END_DIR}/flink-dataset-allround-test/target/DataSetAllroundTestProgram.jar
@@ -27,7 +29,7 @@ echo "Run DataSet-Allround-Test Program"
 echo "taskmanager.network.memory.min: 10485760" >> $FLINK_DIR/conf/flink-conf.yaml
 echo "taskmanager.network.memory.max: 10485760" >> $FLINK_DIR/conf/flink-conf.yaml
 
-set_conf_ssl
+set_conf_ssl "server"
 start_cluster
 start_taskmanagers 3
 
