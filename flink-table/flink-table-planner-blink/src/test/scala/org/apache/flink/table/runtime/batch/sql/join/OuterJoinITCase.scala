@@ -18,20 +18,21 @@
 
 package org.apache.flink.table.runtime.batch.sql.join
 
-import org.apache.flink.table.api.TableConfigOptions
-import org.apache.flink.table.runtime.batch.sql.join.JoinType.{BroadcastHashJoin, JoinType, NestedLoopJoin}
+import org.apache.flink.table.runtime.batch.sql.join.JoinType.{BroadcastHashJoin, HashJoin, JoinType, NestedLoopJoin, SortMergeJoin}
 import org.apache.flink.table.runtime.utils.BatchTestBase
 import org.apache.flink.table.runtime.utils.BatchTestBase.row
 import org.apache.flink.table.runtime.utils.TestData._
 
+import org.junit.runner.RunWith
+import org.junit.runners.Parameterized
 import org.junit.{Before, Test}
+
+import java.util
 
 import scala.collection.Seq
 
-//@RunWith(classOf[Parameterized]) TODO
-class OuterJoinITCase extends BatchTestBase {
-
-  val expectedJoinType: JoinType = JoinType.SortMergeJoin
+@RunWith(classOf[Parameterized])
+class OuterJoinITCase(expectedJoinType: JoinType) extends BatchTestBase {
 
   private lazy val leftT = Seq(
     row(1, 2.0),
@@ -58,11 +59,11 @@ class OuterJoinITCase extends BatchTestBase {
   )
 
   @Before
-  def before(): Unit = {
-    tEnv.getConfig.getConf.setInteger(TableConfigOptions.SQL_RESOURCE_DEFAULT_PARALLELISM, 3)
-    registerCollection("uppercasedata", upperCaseData, INT_STRING, nullablesOfUpperCaseData, "N, L")
-    registerCollection("lowercasedata", lowerCaseData, INT_STRING, nullablesOfLowerCaseData, "n, l")
-    registerCollection("allnulls", allNulls, INT_ONLY, nullablesOfAllNulls, "a")
+  override def before(): Unit = {
+    super.before()
+    registerCollection("uppercasedata", upperCaseData, INT_STRING, "N, L", nullablesOfUpperCaseData)
+    registerCollection("lowercasedata", lowerCaseData, INT_STRING, "n, l", nullablesOfLowerCaseData)
+    registerCollection("allnulls", allNulls, INT_ONLY, "a", nullablesOfAllNulls)
     registerCollection("leftT", leftT, INT_DOUBLE, "a, b")
     registerCollection("rightT", rightT, INT_DOUBLE, "c, d")
     JoinITCaseHelper.disableOtherJoinOpForJoin(tEnv, expectedJoinType)
@@ -381,5 +382,13 @@ class OuterJoinITCase extends BatchTestBase {
         row(
           null, 10) :: Nil)
     }
+  }
+}
+
+object OuterJoinITCase {
+  @Parameterized.Parameters(name = "{0}")
+  def parameters(): util.Collection[Array[_]] = {
+    util.Arrays.asList(
+      Array(BroadcastHashJoin), Array(HashJoin), Array(SortMergeJoin), Array(NestedLoopJoin))
   }
 }

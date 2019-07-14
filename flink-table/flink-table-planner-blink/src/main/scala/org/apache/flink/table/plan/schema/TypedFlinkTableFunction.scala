@@ -18,10 +18,12 @@
 
 package org.apache.flink.table.plan.schema
 
-import org.apache.flink.api.common.typeinfo.TypeInformation
-import org.apache.flink.table.`type`.TypeConverters
 import org.apache.flink.table.calcite.FlinkTypeFactory
 import org.apache.flink.table.functions.TableFunction
+import org.apache.flink.table.types.DataType
+import org.apache.flink.table.types.TypeInfoDataTypeConverter.fromDataTypeToTypeInfo
+import org.apache.flink.table.types.TypeInfoLogicalTypeConverter.fromTypeInfoToLogicalType
+import org.apache.flink.table.typeutils.FieldInfoUtils
 
 import org.apache.calcite.rel.`type`.{RelDataType, RelDataTypeFactory}
 
@@ -34,20 +36,32 @@ import org.apache.calcite.rel.`type`.{RelDataType, RelDataTypeFactory}
   */
 class TypedFlinkTableFunction(
     val tableFunction: TableFunction[_],
-    val externalResultType: TypeInformation[_])
+    fieldNames: Array[String],
+    val externalResultType: DataType)
   extends FlinkTableFunction(tableFunction) {
 
   override def getExternalResultType(
       arguments: Array[AnyRef],
-      argTypes: Array[Class[_]]): TypeInformation[_] =
+      argTypes: Array[Class[_]]): DataType =
     externalResultType
 
   override def getRowType(
       typeFactory: RelDataTypeFactory,
       arguments: Array[AnyRef],
       argTypes: Array[Class[_]]): RelDataType = {
-    // we have determined the row type before, just convert it to RelDataType
-    typeFactory.asInstanceOf[FlinkTypeFactory].createTypeFromInternalType(
-      TypeConverters.createInternalTypeFromTypeInfo(externalResultType), isNullable = true)
+    val fieldTypes = FieldInfoUtils.getFieldTypes(
+      fromDataTypeToTypeInfo(externalResultType)).map(fromTypeInfoToLogicalType)
+    if (fieldTypes.length < fieldNames.length) {
+      throw new RuntimeException(s"fieldTypes: $fieldTypes, but fieldNames: $fieldNames")
+    }
+
+    val flinkTypeFactory = typeFactory.asInstanceOf[FlinkTypeFactory]
+    val builder = flinkTypeFactory.builder
+    fieldNames
+        .zip(fieldTypes.dropRight(fieldTypes.length - fieldNames.length))
+        .foreach { f =>
+          builder.add(f._1, flinkTypeFactory.createFieldTypeFromLogicalType(f._2))
+        }
+    builder.build
   }
 }

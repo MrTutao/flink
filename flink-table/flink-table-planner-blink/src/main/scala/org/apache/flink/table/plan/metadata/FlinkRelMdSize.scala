@@ -231,24 +231,23 @@ class FlinkRelMdSize private extends MetadataHandler[BuiltInMetadata.Size] {
   }
 
   def averageColumnSizes(overWindow: Window, mq: RelMetadataQuery): JList[JDouble] =
-    averageColumnSizesOfOverWindow(overWindow, mq)
+    averageColumnSizesOfOverAgg(overWindow, mq)
 
   def averageColumnSizes(rel: BatchExecOverAggregate, mq: RelMetadataQuery): JList[JDouble] =
-    averageColumnSizesOfOverWindow(rel, mq)
+    averageColumnSizesOfOverAgg(rel, mq)
 
-  private def averageColumnSizesOfOverWindow(
-      overWindow: SingleRel,
+  private def averageColumnSizesOfOverAgg(
+      overAgg: SingleRel,
       mq: RelMetadataQuery): JList[JDouble] = {
-    val inputFieldCount = overWindow.getInput.getRowType.getFieldCount
-    getColumnSizesFromInputOrType(overWindow, mq, (0 until inputFieldCount).zipWithIndex.toMap)
+    val inputFieldCount = overAgg.getInput.getRowType.getFieldCount
+    getColumnSizesFromInputOrType(overAgg, mq, (0 until inputFieldCount).zipWithIndex.toMap)
   }
 
   def averageColumnSizes(rel: Join, mq: RelMetadataQuery): JList[JDouble] = {
     val acsOfLeft = mq.getAverageColumnSizes(rel.getLeft)
-    val acsOfRight = if (rel.getJoinType.projectsRight) {
-      mq.getAverageColumnSizes(rel.getRight)
-    } else {
-      null
+    val acsOfRight = rel.getJoinType match {
+      case JoinRelType.SEMI | JoinRelType.ANTI => null
+      case _ => mq.getAverageColumnSizes(rel.getRight)
     }
     if (acsOfLeft == null && acsOfRight == null) {
       null
@@ -427,7 +426,8 @@ object FlinkRelMdSize {
     case typeName if SqlTypeName.YEAR_INTERVAL_TYPES.contains(typeName) => 8D
     case typeName if SqlTypeName.DAY_INTERVAL_TYPES.contains(typeName) => 4D
     // TODO after time/date => int, timestamp => long, this estimate value should update
-    case SqlTypeName.TIME | SqlTypeName.TIMESTAMP | SqlTypeName.DATE => 12D
+    case SqlTypeName.TIME | SqlTypeName.TIMESTAMP |
+         SqlTypeName.TIMESTAMP_WITH_LOCAL_TIME_ZONE | SqlTypeName.DATE => 12D
     case SqlTypeName.ANY => 128D // 128 is an arbitrary estimate
     case SqlTypeName.BINARY | SqlTypeName.VARBINARY => 16D // 16 is an arbitrary estimate
     case _ => throw new TableException(s"Unsupported data type encountered: $sqlType")

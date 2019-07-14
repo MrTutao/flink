@@ -18,13 +18,14 @@
 
 package org.apache.flink.table.plan.reuse
 
-import org.apache.flink.runtime.io.network.DataExchangeMode
 import org.apache.flink.runtime.operators.DamBehavior
 import org.apache.flink.streaming.api.datastream.DataStream
+import org.apache.flink.streaming.api.transformations.ShuffleMode
 import org.apache.flink.table.api.TableException
 import org.apache.flink.table.plan.`trait`.FlinkRelDistribution
 import org.apache.flink.table.plan.nodes.exec.{BatchExecNode, ExecNode, ExecNodeVisitorImpl}
 import org.apache.flink.table.plan.nodes.physical.batch._
+import org.apache.flink.table.plan.nodes.process.{DAGProcessContext, DAGProcessor}
 
 import com.google.common.collect.{Maps, Sets}
 import org.apache.calcite.rel.RelNode
@@ -69,7 +70,7 @@ import scala.collection.mutable
   *                     |
   *                 HashJoin
   *     (build side)/      \(probe side)
-  *    (broadcast)Exchange Exchange(exchange_mode=[BATCH]) add BATCH Exchange to breakup deadlock
+  *    (broadcast)Exchange Exchange(shuffle_mode=[BATCH]) add BATCH Exchange to breakup deadlock
   *                |        |
   *             Calc(b>10) Calc(b<20)
   *                 \      /
@@ -82,9 +83,10 @@ import scala.collection.mutable
   *                ScanTableSource
   * }}}
   */
-class DeadlockBreakupProcessor {
+class DeadlockBreakupProcessor extends DAGProcessor {
 
-  def process(rootNodes: util.List[ExecNode[_, _]]): util.List[ExecNode[_, _]] = {
+  def process(rootNodes: util.List[ExecNode[_, _]],
+      context: DAGProcessContext): util.List[ExecNode[_, _]] = {
     if (!rootNodes.forall(_.isInstanceOf[BatchExecNode[_]])) {
       throw new TableException("Only BatchExecNode DAG is supported now")
     }
@@ -163,7 +165,7 @@ class DeadlockBreakupProcessor {
         probeNode match {
           case e: BatchExecExchange =>
             // TODO create a cloned BatchExecExchange for PIPELINE output
-            e.setRequiredDataExchangeMode(DataExchangeMode.BATCH)
+            e.setRequiredShuffleMode(ShuffleMode.BATCH)
           case _ =>
             val probeRel = probeNode.asInstanceOf[RelNode]
             val traitSet = probeRel.getTraitSet.replace(distribution)
@@ -172,7 +174,7 @@ class DeadlockBreakupProcessor {
               traitSet,
               probeRel,
               distribution)
-            e.setRequiredDataExchangeMode(DataExchangeMode.BATCH)
+            e.setRequiredShuffleMode(ShuffleMode.BATCH)
             // replace join node's input
             join.replaceInputNode(probeSideIndex, e)
         }

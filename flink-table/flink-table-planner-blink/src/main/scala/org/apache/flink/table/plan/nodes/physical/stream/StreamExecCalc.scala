@@ -18,15 +18,17 @@
 
 package org.apache.flink.table.plan.nodes.physical.stream
 
-import org.apache.flink.streaming.api.transformations.{OneInputTransformation, StreamTransformation}
-import org.apache.flink.table.api.StreamTableEnvironment
+import org.apache.flink.api.dag.Transformation
+import org.apache.flink.streaming.api.transformations.OneInputTransformation
 import org.apache.flink.table.calcite.FlinkTypeFactory
 import org.apache.flink.table.codegen.{CalcCodeGenerator, CodeGeneratorContext}
 import org.apache.flink.table.dataformat.BaseRow
 import org.apache.flink.table.plan.nodes.common.CommonCalc
 import org.apache.flink.table.plan.nodes.exec.{ExecNode, StreamExecNode}
 import org.apache.flink.table.plan.util.RelExplainUtil
+import org.apache.flink.table.planner.StreamPlanner
 import org.apache.flink.table.runtime.AbstractProcessStreamOperator
+import org.apache.flink.table.typeutils.BaseRowTypeInfo
 
 import org.apache.calcite.plan.{RelOptCluster, RelTraitSet}
 import org.apache.calcite.rel.RelNode
@@ -69,20 +71,20 @@ class StreamExecCalc(
 
   //~ ExecNode methods -----------------------------------------------------------
 
-  override def getInputNodes: util.List[ExecNode[StreamTableEnvironment, _]] =
-    List(getInput.asInstanceOf[ExecNode[StreamTableEnvironment, _]])
+  override def getInputNodes: util.List[ExecNode[StreamPlanner, _]] =
+    List(getInput.asInstanceOf[ExecNode[StreamPlanner, _]])
 
   override def replaceInputNode(
       ordinalInParent: Int,
-      newInputNode: ExecNode[StreamTableEnvironment, _]): Unit = {
+      newInputNode: ExecNode[StreamPlanner, _]): Unit = {
     replaceInput(ordinalInParent, newInputNode.asInstanceOf[RelNode])
   }
 
-  override def translateToPlanInternal(
-      tableEnv: StreamTableEnvironment): StreamTransformation[BaseRow] = {
-    val config = tableEnv.getConfig
-    val inputTransform = getInputNodes.get(0).translateToPlan(tableEnv)
-        .asInstanceOf[StreamTransformation[BaseRow]]
+  override protected def translateToPlanInternal(
+      planner: StreamPlanner): Transformation[BaseRow] = {
+    val config = planner.getTableConfig
+    val inputTransform = getInputNodes.get(0).translateToPlan(planner)
+        .asInstanceOf[Transformation[BaseRow]]
     // materialize time attributes in condition
     val condition = if (calcProgram.getCondition != null) {
       Some(calcProgram.expandLocalRef(calcProgram.getCondition))
@@ -103,7 +105,7 @@ class StreamExecCalc(
 
     val ctx = CodeGeneratorContext(config).setOperatorBaseClass(
       classOf[AbstractProcessStreamOperator[BaseRow]])
-    val outputType = FlinkTypeFactory.toInternalRowType(getRowType)
+    val outputType = FlinkTypeFactory.toLogicalRowType(getRowType)
     val substituteStreamOperator = CalcCodeGenerator.generateCalcOperator(
       ctx,
       cluster,
@@ -115,11 +117,16 @@ class StreamExecCalc(
       retainHeader = true,
       "StreamExecCalc"
     )
-    new OneInputTransformation(
+    val ret = new OneInputTransformation(
       inputTransform,
       RelExplainUtil.calcToString(calcProgram, getExpressionString),
       substituteStreamOperator,
-      outputType.toTypeInfo,
-      inputTransform.getParallelism)
+      BaseRowTypeInfo.of(outputType),
+      getResource.getParallelism)
+
+    if (getResource.getMaxParallelism > 0) {
+      ret.setMaxParallelism(getResource.getMaxParallelism)
+    }
+    ret
   }
 }

@@ -22,11 +22,13 @@ import org.apache.flink.annotation.Internal
 import org.apache.flink.api.common.typeinfo.TypeInformation
 import org.apache.flink.streaming.api.datastream.DataStream
 import org.apache.flink.table.api.{Table, TableException}
+import org.apache.flink.table.operations.QueryOperation
+import org.apache.flink.table.types.TypeInfoDataTypeConverter.fromDataTypeToTypeInfo
 
 /**
   * A [[DataStreamTableSink]] specifies how to emit a [[Table]] to an DataStream[T]
   *
-  * @param table      The [[Table]] to emit.
+  * @param queryOperation The [[QueryOperation]] to emit.
   * @param outputType The [[TypeInformation]] that specifies the type of the [[DataStream]].
   * @param updatesAsRetraction Set to true to encode updates as retraction messages.
   * @param withChangeFlag Set to true to emit records with change flags.
@@ -34,24 +36,25 @@ import org.apache.flink.table.api.{Table, TableException}
   */
 @Internal
 class DataStreamTableSink[T](
-    table: Table,
+    queryOperation: QueryOperation,
     outputType: TypeInformation[T],
     val updatesAsRetraction: Boolean,
     val withChangeFlag: Boolean) extends TableSink[T] {
 
-  private lazy val tableSchema = table.getSchema
+  private lazy val tableSchema = queryOperation.getTableSchema
 
   /**
     * Return the type expected by this [[TableSink]].
     *
-    * This type should depend on the types returned by [[getFieldNames]].
+    * This type should depend on the types returned by [[getTableSchema]].
     *
     * @return The type expected by this [[TableSink]].
     */
   override def getOutputType: TypeInformation[T] = outputType
 
   /** Returns the types of the table fields. */
-  override def getFieldTypes: Array[TypeInformation[_]] = Array(tableSchema.getFieldTypes: _*)
+  override def getFieldTypes: Array[TypeInformation[_]] =
+    Array(tableSchema.getFieldDataTypes.map(fromDataTypeToTypeInfo): _*)
 
   /** Returns the names of the table fields. */
   override def getFieldNames: Array[String] = tableSchema.getFieldNames

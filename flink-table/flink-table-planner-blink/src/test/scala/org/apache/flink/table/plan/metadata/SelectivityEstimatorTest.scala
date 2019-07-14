@@ -20,6 +20,7 @@ package org.apache.flink.table.plan.metadata
 
 import org.apache.flink.table.api.TableConfig
 import org.apache.flink.table.calcite.{FlinkContext, FlinkContextImpl, FlinkTypeFactory, FlinkTypeSystem}
+import org.apache.flink.table.catalog.FunctionCatalog
 import org.apache.flink.table.plan.schema._
 import org.apache.flink.table.plan.stats.{ColumnStats, FlinkStatistic, TableStats}
 import org.apache.flink.table.{JDouble, JLong}
@@ -78,11 +79,12 @@ class SelectivityEstimatorTest {
   private def mockScan(
       statistic: FlinkStatistic = FlinkStatistic.UNKNOWN,
       isFilterPushedDown: Boolean = false,
-      tableConfig: TableConfig = TableConfig.DEFAULT): TableScan = {
+      tableConfig: TableConfig = TableConfig.getDefault): TableScan = {
     val tableScan = mock(classOf[TableScan])
     val cluster = mock(classOf[RelOptCluster])
     val planner = mock(classOf[AbstractRelOptPlanner])
-    val context: FlinkContext = new FlinkContextImpl(tableConfig)
+    val functionCatalog = new FunctionCatalog("default_catalog", "default_database")
+    val context: FlinkContext = new FlinkContextImpl(tableConfig, functionCatalog)
     when(tableScan, "getCluster").thenReturn(cluster)
     when(cluster, "getRexBuilder").thenReturn(rexBuilder)
     when(cluster, "getPlanner").thenReturn(planner)

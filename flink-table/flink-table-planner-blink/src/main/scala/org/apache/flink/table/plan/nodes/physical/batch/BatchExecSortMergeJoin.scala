@@ -17,25 +17,30 @@
  */
 package org.apache.flink.table.plan.nodes.physical.batch
 
+import org.apache.flink.api.dag.Transformation
 import org.apache.flink.runtime.operators.DamBehavior
-import org.apache.flink.streaming.api.transformations.{StreamTransformation, TwoInputTransformation}
-import org.apache.flink.table.`type`.{RowType, TypeConverters}
-import org.apache.flink.table.api.{BatchTableEnvironment, TableConfigOptions}
+import org.apache.flink.streaming.api.transformations.TwoInputTransformation
+import org.apache.flink.table.api.ExecutionConfigOptions
 import org.apache.flink.table.calcite.FlinkTypeFactory
 import org.apache.flink.table.codegen.CodeGeneratorContext
 import org.apache.flink.table.codegen.ProjectionCodeGenerator.generateProjection
 import org.apache.flink.table.codegen.sort.SortCodeGenerator
 import org.apache.flink.table.dataformat.BaseRow
+import org.apache.flink.table.plan.`trait`.FlinkRelDistributionTraitDef
 import org.apache.flink.table.plan.cost.{FlinkCost, FlinkCostFactory}
 import org.apache.flink.table.plan.nodes.ExpressionFormat
 import org.apache.flink.table.plan.nodes.exec.ExecNode
-import org.apache.flink.table.plan.util.{FlinkRelMdUtil, JoinUtil, SortUtil}
+import org.apache.flink.table.plan.nodes.resource.NodeResourceUtil
+import org.apache.flink.table.plan.util.{FlinkRelMdUtil, FlinkRelOptUtil, JoinUtil, SortUtil}
+import org.apache.flink.table.planner.BatchPlanner
 import org.apache.flink.table.runtime.join.{FlinkJoinType, SortMergeJoinOperator}
+import org.apache.flink.table.types.logical.RowType
+import org.apache.flink.table.typeutils.BaseRowTypeInfo
 
 import org.apache.calcite.plan._
 import org.apache.calcite.rel.core._
 import org.apache.calcite.rel.metadata.RelMetadataQuery
-import org.apache.calcite.rel.{RelNode, RelWriter}
+import org.apache.calcite.rel.{RelCollationTraitDef, RelNode, RelWriter}
 import org.apache.calcite.rex.RexNode
 
 import java.util
@@ -66,20 +71,6 @@ class BatchExecSortMergeJoin(
       joinRelType == FlinkJoinType.LEFT ||
       joinRelType == FlinkJoinType.RIGHT ||
       joinRelType == FlinkJoinType.FULL
-  }
-
-  protected lazy val smjType: SortMergeJoinType.Value = {
-    (leftSorted, rightSorted) match {
-      case (true, true) if isMergeJoinSupportedType(flinkJoinType) =>
-        SortMergeJoinType.MergeJoin
-      case (false, true) //TODO support more
-        if flinkJoinType == FlinkJoinType.INNER || flinkJoinType == FlinkJoinType.RIGHT =>
-        SortMergeJoinType.SortLeftJoin
-      case (true, false) //TODO support more
-        if flinkJoinType == FlinkJoinType.INNER || flinkJoinType == FlinkJoinType.LEFT =>
-        SortMergeJoinType.SortRightJoin
-      case _ => SortMergeJoinType.SortMergeJoin
-    }
   }
 
   override def copy(
@@ -142,6 +133,55 @@ class BatchExecSortMergeJoin(
     costFactory.makeCost(rowCount, cpuCost, 0, 0, sortMemCost)
   }
 
+  override def satisfyTraits(requiredTraitSet: RelTraitSet): Option[RelNode] = {
+    val requiredDistribution = requiredTraitSet.getTrait(FlinkRelDistributionTraitDef.INSTANCE)
+    val (canSatisfyDistribution, leftRequiredDistribution, rightRequiredDistribution) =
+      satisfyHashDistributionOnNonBroadcastJoin(requiredDistribution)
+    if (!canSatisfyDistribution) {
+      return None
+    }
+
+    val requiredCollation = requiredTraitSet.getTrait(RelCollationTraitDef.INSTANCE)
+    val requiredFieldCollations = requiredCollation.getFieldCollations
+    val shuffleKeysSize = leftRequiredDistribution.getKeys.size
+
+    val newLeft = RelOptRule.convert(getLeft, leftRequiredDistribution)
+    val newRight = RelOptRule.convert(getRight, rightRequiredDistribution)
+
+    // SortMergeJoin can provide collation trait, check whether provided collation can satisfy
+    // required collations
+    val canProvideCollation = if (requiredCollation.getFieldCollations.isEmpty) {
+      false
+    } else if (requiredFieldCollations.size > shuffleKeysSize) {
+      // Sort by [a, b] can satisfy [a], but cannot satisfy [a, b, c]
+      false
+    } else {
+      val leftKeys = leftRequiredDistribution.getKeys
+      val leftFieldCnt = getLeft.getRowType.getFieldCount
+      val rightKeys = rightRequiredDistribution.getKeys.map(_ + leftFieldCnt)
+      requiredFieldCollations.zipWithIndex.forall { case (collation, index) =>
+        val idxOfCollation = collation.getFieldIndex
+        // Full outer join is handled before, so does not need care about it
+        if (idxOfCollation < leftFieldCnt && joinType != JoinRelType.RIGHT) {
+          val fieldCollationOnLeftSortKey = FlinkRelOptUtil.ofRelFieldCollation(leftKeys.get(index))
+          collation == fieldCollationOnLeftSortKey
+        } else if (idxOfCollation >= leftFieldCnt &&
+          (joinType == JoinRelType.RIGHT || joinType == JoinRelType.INNER)) {
+          val fieldCollationOnRightSortKey =
+            FlinkRelOptUtil.ofRelFieldCollation(rightKeys.get(index))
+          collation == fieldCollationOnRightSortKey
+        } else {
+          false
+        }
+      }
+    }
+    var newProvidedTraitSet = getTraitSet.replace(requiredDistribution)
+    if (canProvideCollation) {
+      newProvidedTraitSet = newProvidedTraitSet.replace(requiredCollation)
+    }
+    Some(copy(newProvidedTraitSet, Seq(newLeft, newRight)))
+  }
+
   //~ ExecNode methods -----------------------------------------------------------
 
   /**
@@ -150,39 +190,42 @@ class BatchExecSortMergeJoin(
     */
   override def getDamBehavior: DamBehavior = DamBehavior.FULL_DAM
 
-  override def getInputNodes: util.List[ExecNode[BatchTableEnvironment, _]] =
-    getInputs.map(_.asInstanceOf[ExecNode[BatchTableEnvironment, _]])
+  override def getInputNodes: util.List[ExecNode[BatchPlanner, _]] =
+    getInputs.map(_.asInstanceOf[ExecNode[BatchPlanner, _]])
 
   override def replaceInputNode(
       ordinalInParent: Int,
-      newInputNode: ExecNode[BatchTableEnvironment, _]): Unit = {
+      newInputNode: ExecNode[BatchPlanner, _]): Unit = {
     replaceInput(ordinalInParent, newInputNode.asInstanceOf[RelNode])
   }
 
-  override def translateToPlanInternal(
-      tableEnv: BatchTableEnvironment): StreamTransformation[BaseRow] = {
+  override protected def translateToPlanInternal(
+      planner: BatchPlanner): Transformation[BaseRow] = {
+    val config = planner.getTableConfig
+    val leftInput = getInputNodes.get(0).translateToPlan(planner)
+        .asInstanceOf[Transformation[BaseRow]]
+    val rightInput = getInputNodes.get(1).translateToPlan(planner)
+        .asInstanceOf[Transformation[BaseRow]]
 
-    val config = tableEnv.getConfig
+    val leftType = leftInput.getOutputType.asInstanceOf[BaseRowTypeInfo].toRowType
+    val rightType = rightInput.getOutputType.asInstanceOf[BaseRowTypeInfo].toRowType
 
-    val leftInput = getInputNodes.get(0).translateToPlan(tableEnv)
-        .asInstanceOf[StreamTransformation[BaseRow]]
-    val rightInput = getInputNodes.get(1).translateToPlan(tableEnv)
-        .asInstanceOf[StreamTransformation[BaseRow]]
+    val keyType = RowType.of(leftAllKey.map(leftType.getChildren.get(_)): _*)
 
-    val leftType = TypeConverters.createInternalTypeFromTypeInfo(
-      leftInput.getOutputType).asInstanceOf[RowType]
-    val rightType = TypeConverters.createInternalTypeFromTypeInfo(
-      rightInput.getOutputType).asInstanceOf[RowType]
+    val condFunc = JoinUtil.generateConditionFunction(
+      config,
+      cluster.getRexBuilder,
+      getJoinInfo,
+      leftType,
+      rightType)
 
-    val keyType = new RowType(leftAllKey.map(leftType.getFieldTypes()(_)): _*)
+    val externalBufferMemoryInMB = config.getConfiguration.getInteger(
+      ExecutionConfigOptions.SQL_RESOURCE_EXTERNAL_BUFFER_MEM)
+    val externalBufferMemory = externalBufferMemoryInMB * NodeResourceUtil.SIZE_IN_MB
 
-    val condFunc = generateCondition(config, leftType, rightType)
-
-    val externalBufferMemory = config.getConf.getInteger(
-      TableConfigOptions.SQL_RESOURCE_EXTERNAL_BUFFER_MEM) * TableConfigOptions.SIZE_IN_MB
-
-    val sortMemory = config.getConf.getInteger(
-      TableConfigOptions.SQL_RESOURCE_SORT_BUFFER_MEM) * TableConfigOptions.SIZE_IN_MB
+    val sortMemoryInMB = config.getConfiguration.getInteger(
+      ExecutionConfigOptions.SQL_RESOURCE_SORT_BUFFER_MEM)
+    val sortMemory = sortMemoryInMB * NodeResourceUtil.SIZE_IN_MB
 
     def newSortGen(originalKeys: Array[Int], t: RowType): SortCodeGenerator = {
       val originalOrders = originalKeys.map(_ => true)
@@ -215,13 +258,18 @@ class BatchExecSortMergeJoin(
       newSortGen(leftAllKey.indices.toArray, keyType).generateRecordComparator("KeyComparator"),
       filterNulls)
 
-    new TwoInputTransformation[BaseRow, BaseRow, BaseRow](
+    val externalBufferNum = if (flinkJoinType == FlinkJoinType.FULL) 2 else 1
+    val managedMemoryInMB = externalBufferMemoryInMB * externalBufferNum + sortMemoryInMB * 2
+    val ret = new TwoInputTransformation[BaseRow, BaseRow, BaseRow](
       leftInput,
       rightInput,
       getOperatorName,
       operator,
-      FlinkTypeFactory.toInternalRowType(getRowType).toTypeInfo,
-      leftInput.getParallelism)
+      BaseRowTypeInfo.of(FlinkTypeFactory.toLogicalRowType(getRowType)),
+      getResource.getParallelism)
+    val resource = NodeResourceUtil.fromManagedMem(managedMemoryInMB)
+    ret.setResources(resource, resource)
+    ret
   }
 
   private def estimateOutputSize(relNode: RelNode): Double = {
@@ -236,17 +284,4 @@ class BatchExecSortMergeJoin(
   } else {
     "SortMergeJoin"
   }
-}
-
-
-object SortMergeJoinType extends Enumeration {
-  type SortMergeJoinType = Value
-  // both LHS and RHS have been sorted
-  val MergeJoin,
-  // RHS has been sorted, only LHS needs sort
-  SortLeftJoin,
-  // LHS has been sorted, only RHS needs sort
-  SortRightJoin,
-  // both LHS and RHS need sort
-  SortMergeJoin = Value
 }

@@ -20,13 +20,15 @@ package org.apache.flink.table.plan.metadata
 
 import org.apache.flink.table.JBoolean
 import org.apache.flink.table.api.TableException
+import org.apache.flink.table.calcite.FlinkRelBuilder.PlannerNamedWindowProperty
 import org.apache.flink.table.plan.nodes.FlinkRelNode
-import org.apache.flink.table.plan.nodes.calcite.{Expand, Rank}
+import org.apache.flink.table.plan.nodes.calcite.{Expand, Rank, WindowAggregate}
+import org.apache.flink.table.plan.nodes.common.CommonLookupJoin
 import org.apache.flink.table.plan.nodes.logical._
 import org.apache.flink.table.plan.nodes.physical.batch._
 import org.apache.flink.table.plan.nodes.physical.stream._
 import org.apache.flink.table.plan.schema.FlinkRelOptTable
-import org.apache.flink.table.plan.util.FlinkRelMdUtil
+import org.apache.flink.table.plan.util.{FlinkRelMdUtil, RankUtil}
 import org.apache.flink.table.runtime.rank.RankType
 import org.apache.flink.table.sources.TableSource
 
@@ -38,7 +40,6 @@ import org.apache.calcite.rel.core._
 import org.apache.calcite.rel.metadata._
 import org.apache.calcite.rel.{RelNode, SingleRel}
 import org.apache.calcite.rex.{RexCall, RexInputRef, RexNode}
-import org.apache.calcite.sql.SemiJoinType._
 import org.apache.calcite.sql.SqlKind
 import org.apache.calcite.sql.fun.SqlStdOperatorTable
 import org.apache.calcite.util.{Bug, BuiltInMethod, ImmutableBitSet, Util}
@@ -267,7 +268,7 @@ class FlinkRelMdColumnUniqueness private extends MetadataHandler[BuiltInMetadata
       columns: ImmutableBitSet,
       ignoreNulls: Boolean): JBoolean = {
     val input = rank.getInput
-    val rankFunColumnIndex = FlinkRelMdUtil.getRankFunctionColumnIndex(rank).getOrElse(-1)
+    val rankFunColumnIndex = RankUtil.getRankNumberColumnIndex(rank).getOrElse(-1)
     if (rankFunColumnIndex < 0) {
       mq.areColumnsUnique(input, columns, ignoreNulls)
     } else {
@@ -305,9 +306,7 @@ class FlinkRelMdColumnUniqueness private extends MetadataHandler[BuiltInMetadata
       mq: RelMetadataQuery,
       columns: ImmutableBitSet,
       ignoreNulls: Boolean): JBoolean = {
-    // group by keys form a unique key
-    val groupKey = ImmutableBitSet.range(rel.getGroupCount)
-    columns.contains(groupKey)
+    areColumnsUniqueOnAggregate(rel.getGroupSet.toArray, mq, columns, ignoreNulls)
   }
 
   def areColumnsUnique(
@@ -316,9 +315,7 @@ class FlinkRelMdColumnUniqueness private extends MetadataHandler[BuiltInMetadata
       columns: ImmutableBitSet,
       ignoreNulls: Boolean): JBoolean = {
     if (rel.isFinal) {
-      // group key of agg output always starts from 0
-      val outputGroupKey = ImmutableBitSet.range(rel.getGrouping.length)
-      columns.contains(outputGroupKey)
+      areColumnsUniqueOnAggregate(rel.getGrouping, mq, columns, ignoreNulls)
     } else {
       null
     }
@@ -329,9 +326,7 @@ class FlinkRelMdColumnUniqueness private extends MetadataHandler[BuiltInMetadata
       mq: RelMetadataQuery,
       columns: ImmutableBitSet,
       ignoreNulls: Boolean): JBoolean = {
-    // group key of agg output always starts from 0
-    val outputGroupKey = ImmutableBitSet.range(rel.grouping.length)
-    columns.contains(outputGroupKey)
+    areColumnsUniqueOnAggregate(rel.grouping, mq, columns, ignoreNulls)
   }
 
   def areColumnsUnique(
@@ -339,7 +334,7 @@ class FlinkRelMdColumnUniqueness private extends MetadataHandler[BuiltInMetadata
       mq: RelMetadataQuery,
       columns: ImmutableBitSet,
       ignoreNulls: Boolean): JBoolean = {
-    columns.contains(ImmutableBitSet.of(rel.grouping.toArray: _*))
+    areColumnsUniqueOnAggregate(rel.grouping, mq, columns, ignoreNulls)
   }
 
   def areColumnsUnique(
@@ -348,32 +343,105 @@ class FlinkRelMdColumnUniqueness private extends MetadataHandler[BuiltInMetadata
       columns: ImmutableBitSet,
       ignoreNulls: Boolean): JBoolean = null
 
-  // TODO supports window aggregate
+  private  def areColumnsUniqueOnAggregate(
+      grouping: Array[Int],
+      mq: RelMetadataQuery,
+      columns: ImmutableBitSet,
+      ignoreNulls: Boolean): JBoolean = {
+    // group key of agg output always starts from 0
+    val outputGroupKey = ImmutableBitSet.of(grouping.indices: _*)
+    columns.contains(outputGroupKey)
+  }
+
+  def areColumnsUnique(
+      rel: WindowAggregate,
+      mq: RelMetadataQuery,
+      columns: ImmutableBitSet,
+      ignoreNulls: Boolean): JBoolean = {
+    areColumnsUniqueOnWindowAggregate(
+      rel.getGroupSet.toArray,
+      rel.getNamedProperties,
+      rel.getRowType.getFieldCount,
+      mq,
+      columns,
+      ignoreNulls)
+  }
+
+  def areColumnsUnique(
+      rel: BatchExecWindowAggregateBase,
+      mq: RelMetadataQuery,
+      columns: ImmutableBitSet,
+      ignoreNulls: Boolean): JBoolean = {
+    if (rel.isFinal) {
+      areColumnsUniqueOnWindowAggregate(
+        rel.getGrouping,
+        rel.getNamedProperties,
+        rel.getRowType.getFieldCount,
+        mq,
+        columns,
+        ignoreNulls)
+    } else {
+      null
+    }
+  }
+
+  def areColumnsUnique(
+      rel: StreamExecGroupWindowAggregate,
+      mq: RelMetadataQuery,
+      columns: ImmutableBitSet,
+      ignoreNulls: Boolean): JBoolean = {
+    areColumnsUniqueOnWindowAggregate(
+      rel.getGrouping,
+      rel.getWindowProperties,
+      rel.getRowType.getFieldCount,
+      mq,
+      columns,
+      ignoreNulls)
+  }
+
+  private def areColumnsUniqueOnWindowAggregate(
+      grouping: Array[Int],
+      namedProperties: Seq[PlannerNamedWindowProperty],
+      outputFieldCount: Int,
+      mq: RelMetadataQuery,
+      columns: ImmutableBitSet,
+      ignoreNulls: Boolean): JBoolean = {
+    if (namedProperties.nonEmpty) {
+      val begin = outputFieldCount - namedProperties.size
+      val end = outputFieldCount - 1
+      val keys = ImmutableBitSet.of(grouping.indices: _*)
+      (begin to end).map {
+        i => keys.union(ImmutableBitSet.of(i))
+      }.exists(columns.contains)
+    } else {
+      false
+    }
+  }
 
   def areColumnsUnique(
       rel: Window,
       mq: RelMetadataQuery,
       columns: ImmutableBitSet,
-      ignoreNulls: Boolean): JBoolean = areColumnsUniqueOfOverWindow(rel, mq, columns, ignoreNulls)
+      ignoreNulls: Boolean): JBoolean = areColumnsUniqueOfOverAgg(rel, mq, columns, ignoreNulls)
 
   def areColumnsUnique(
       rel: BatchExecOverAggregate,
       mq: RelMetadataQuery,
       columns: ImmutableBitSet,
-      ignoreNulls: Boolean): JBoolean = areColumnsUniqueOfOverWindow(rel, mq, columns, ignoreNulls)
+      ignoreNulls: Boolean): JBoolean = areColumnsUniqueOfOverAgg(rel, mq, columns, ignoreNulls)
 
   def areColumnsUnique(
       rel: StreamExecOverAggregate,
       mq: RelMetadataQuery,
       columns: ImmutableBitSet,
-      ignoreNulls: Boolean): JBoolean = areColumnsUniqueOfOverWindow(rel, mq, columns, ignoreNulls)
+      ignoreNulls: Boolean): JBoolean = areColumnsUniqueOfOverAgg(rel, mq, columns, ignoreNulls)
 
-  private def areColumnsUniqueOfOverWindow(
-      overWindow: SingleRel,
+  private def areColumnsUniqueOfOverAgg(
+      overAgg: SingleRel,
       mq: RelMetadataQuery,
       columns: ImmutableBitSet,
       ignoreNulls: Boolean): JBoolean = {
-    val input = overWindow.getInput
+    val input = overAgg.getInput
     val inputFieldLength = input.getRowType.getFieldCount
     val columnsBelongsToInput = ImmutableBitSet.of(columns.filter(_ < inputFieldLength).toList)
     val isSubColumnsUnique = mq.areColumnsUnique(
@@ -427,6 +495,21 @@ class FlinkRelMdColumnUniqueness private extends MetadataHandler[BuiltInMetadata
       (rightSet: ImmutableBitSet) => mq.areColumnsUnique(rel.getRight, rightSet, ignoreNulls),
       mq,
       columns
+    )
+  }
+
+  def areColumnsUnique(
+      join: CommonLookupJoin,
+      mq: RelMetadataQuery,
+      columns: ImmutableBitSet,
+      ignoreNulls: Boolean): JBoolean = {
+    val left = join.getInput
+    areColumnsUniqueOfJoin(
+      join.joinInfo, join.joinType, left.getRowType,
+      (leftSet: ImmutableBitSet) => mq.areColumnsUnique(left, leftSet, ignoreNulls),
+      // TODO get uniqueKeys from TableSchema of TableSource
+      (_: ImmutableBitSet) => null,
+      mq, columns
     )
   }
 
@@ -499,8 +582,9 @@ class FlinkRelMdColumnUniqueness private extends MetadataHandler[BuiltInMetadata
       columns: ImmutableBitSet,
       ignoreNulls: Boolean): JBoolean = {
     rel.getJoinType match {
-      case ANTI | SEMI => mq.areColumnsUnique(rel.getLeft, columns, ignoreNulls)
-      case LEFT | INNER =>
+      case JoinRelType.ANTI | JoinRelType.SEMI =>
+        mq.areColumnsUnique(rel.getLeft, columns, ignoreNulls)
+      case JoinRelType.LEFT | JoinRelType.INNER =>
         val left = rel.getLeft
         val right = rel.getRight
         val leftFieldCount = left.getRowType.getFieldCount
@@ -529,8 +613,6 @@ class FlinkRelMdColumnUniqueness private extends MetadataHandler[BuiltInMetadata
       mq: RelMetadataQuery,
       columns: ImmutableBitSet,
       ignoreNulls: Boolean): JBoolean = null
-
-  // TODO supports temporal table join
 
   def areColumnsUnique(
       rel: SetOp,
