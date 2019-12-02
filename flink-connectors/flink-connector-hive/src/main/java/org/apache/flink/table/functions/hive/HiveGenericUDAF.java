@@ -20,8 +20,8 @@ package org.apache.flink.table.functions.hive;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.java.typeutils.GenericTypeInfo;
 import org.apache.flink.table.catalog.hive.client.HiveShim;
-import org.apache.flink.table.catalog.hive.client.HiveShimLoader;
 import org.apache.flink.table.catalog.hive.util.HiveTypeUtil;
 import org.apache.flink.table.functions.AggregateFunction;
 import org.apache.flink.table.functions.FunctionContext;
@@ -64,16 +64,16 @@ public class HiveGenericUDAF
 	private transient boolean allIdentityConverter;
 	private transient boolean initialized;
 
-	private final String hiveVersion;
+	private final HiveShim hiveShim;
 
-	public HiveGenericUDAF(HiveFunctionWrapper funcWrapper, String hiveVersion) {
-		this(funcWrapper, false, hiveVersion);
+	public HiveGenericUDAF(HiveFunctionWrapper funcWrapper, HiveShim hiveShim) {
+		this(funcWrapper, false, hiveShim);
 	}
 
-	public HiveGenericUDAF(HiveFunctionWrapper funcWrapper, boolean isUDAFBridgeRequired, String hiveVersion) {
+	public HiveGenericUDAF(HiveFunctionWrapper funcWrapper, boolean isUDAFBridgeRequired, HiveShim hiveShim) {
 		this.hiveFunctionWrapper = funcWrapper;
 		this.isUDAFBridgeRequired = isUDAFBridgeRequired;
-		this.hiveVersion = hiveVersion;
+		this.hiveShim = hiveShim;
 	}
 
 	@Override
@@ -83,7 +83,7 @@ public class HiveGenericUDAF
 	}
 
 	private void init() throws HiveException {
-		ObjectInspector[] inputInspectors = HiveInspectors.toInspectors(constantArguments, argTypes);
+		ObjectInspector[] inputInspectors = HiveInspectors.toInspectors(hiveShim, constantArguments, argTypes);
 
 		// Flink UDAF only supports Hive UDAF's PARTIAL_1 and FINAL mode
 
@@ -117,7 +117,6 @@ public class HiveGenericUDAF
 			resolver = (GenericUDAFResolver2) hiveFunctionWrapper.createFunction();
 		}
 
-		HiveShim hiveShim = HiveShimLoader.loadHiveShim(hiveVersion);
 		return resolver.getEvaluator(
 			hiveShim.createUDAFParameterInfo(
 				inputInspectors,
@@ -211,17 +210,7 @@ public class HiveGenericUDAF
 	}
 
 	@Override
-	public TypeInformation getAccumulatorType() {
-		try {
-			if (!initialized) {
-				init();
-			}
-
-			return LegacyTypeInfoDataTypeConverter.toLegacyTypeInfo(
-				HiveTypeUtil.toFlinkType(partialResultObjectInspector));
-		} catch (Exception e) {
-			throw new FlinkHiveUDFException(
-				String.format("Failed to get Hive accumulator type from %s", hiveFunctionWrapper.getClassName()), e);
-		}
+	public TypeInformation<GenericUDAFEvaluator.AggregationBuffer> getAccumulatorType() {
+		return new GenericTypeInfo<>(GenericUDAFEvaluator.AggregationBuffer.class);
 	}
 }

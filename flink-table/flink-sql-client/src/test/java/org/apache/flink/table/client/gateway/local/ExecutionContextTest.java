@@ -25,6 +25,8 @@ import org.apache.flink.client.cli.DefaultCLI;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.Types;
+import org.apache.flink.table.api.config.ExecutionConfigOptions;
+import org.apache.flink.table.api.config.OptimizerConfigOptions;
 import org.apache.flink.table.api.java.StreamTableEnvironment;
 import org.apache.flink.table.catalog.Catalog;
 import org.apache.flink.table.catalog.hive.HiveCatalog;
@@ -58,8 +60,10 @@ import static org.junit.Assert.assertTrue;
 public class ExecutionContextTest {
 
 	private static final String DEFAULTS_ENVIRONMENT_FILE = "test-sql-client-defaults.yaml";
+	private static final String MODULES_ENVIRONMENT_FILE = "test-sql-client-modules.yaml";
 	private static final String CATALOGS_ENVIRONMENT_FILE = "test-sql-client-catalogs.yaml";
 	private static final String STREAMING_ENVIRONMENT_FILE = "test-sql-client-streaming.yaml";
+	private static final String CONFIGURATION_ENVIRONMENT_FILE = "test-sql-client-configuration.yaml";
 
 	@Test
 	public void testExecutionConfig() throws Exception {
@@ -75,6 +79,23 @@ public class ExecutionContextTest {
 		assertEquals(10, failureRateStrategy.getMaxFailureRate());
 		assertEquals(99_000, failureRateStrategy.getFailureInterval().toMilliseconds());
 		assertEquals(1_000, failureRateStrategy.getDelayBetweenAttemptsInterval().toMilliseconds());
+	}
+
+	@Test
+	public void testModules() throws Exception {
+		final ExecutionContext<?> context = createModuleExecutionContext();
+		final TableEnvironment tableEnv = context.createEnvironmentInstance().getTableEnvironment();
+
+		Set<String> allModules = new HashSet<>(Arrays.asList(tableEnv.listModules()));
+		assertEquals(2, allModules.size());
+		assertEquals(
+			new HashSet<>(
+				Arrays.asList(
+					"core",
+					"mymodule")
+			),
+			allModules
+		);
 	}
 
 	@Test
@@ -155,7 +176,7 @@ public class ExecutionContextTest {
 	public void testFunctions() throws Exception {
 		final ExecutionContext<?> context = createDefaultExecutionContext();
 		final TableEnvironment tableEnv = context.createEnvironmentInstance().getTableEnvironment();
-		final String[] expected = new String[]{"scalarUDF", "tableUDF", "aggregateUDF"};
+		final String[] expected = new String[]{"scalarudf", "tableudf", "aggregateudf"};
 		final String[] actual = tableEnv.listUserDefinedFunctions();
 		Arrays.sort(expected);
 		Arrays.sort(actual);
@@ -222,12 +243,48 @@ public class ExecutionContextTest {
 			tableEnv.listTables());
 
 		assertArrayEquals(
-			new String[]{"SourceTemporalTable", "ViewTemporalTable"},
+			new String[]{"sourcetemporaltable", "viewtemporaltable"},
 			tableEnv.listUserDefinedFunctions());
 
 		assertArrayEquals(
 			new String[]{"integerField", "stringField", "rowtimeField", "integerField0", "stringField0", "rowtimeField0"},
 			tableEnv.scan("TemporalTableUsage").getSchema().getFieldNames());
+	}
+
+	@Test
+	public void testConfiguration() throws Exception {
+		final ExecutionContext<?> context = createConfigurationExecutionContext();
+		final TableEnvironment tableEnv = context.createEnvironmentInstance().getTableEnvironment();
+
+		assertEquals(
+			100,
+			tableEnv.getConfig().getConfiguration().getInteger(
+				ExecutionConfigOptions.TABLE_EXEC_SORT_DEFAULT_LIMIT));
+		assertTrue(
+			tableEnv.getConfig().getConfiguration().getBoolean(
+				ExecutionConfigOptions.TABLE_EXEC_SPILL_COMPRESSION_ENABLED));
+		assertEquals(
+			"128kb",
+			tableEnv.getConfig().getConfiguration().getString(
+				ExecutionConfigOptions.TABLE_EXEC_SPILL_COMPRESSION_BLOCK_SIZE));
+
+		assertTrue(
+			tableEnv.getConfig().getConfiguration().getBoolean(
+				OptimizerConfigOptions.TABLE_OPTIMIZER_JOIN_REORDER_ENABLED));
+
+		// these options are not modified and should be equal to their default value
+		assertEquals(
+			ExecutionConfigOptions.TABLE_EXEC_SORT_ASYNC_MERGE_ENABLED.defaultValue(),
+			tableEnv.getConfig().getConfiguration().getBoolean(
+				ExecutionConfigOptions.TABLE_EXEC_SORT_ASYNC_MERGE_ENABLED));
+		assertEquals(
+			ExecutionConfigOptions.TABLE_EXEC_SHUFFLE_MODE.defaultValue(),
+			tableEnv.getConfig().getConfiguration().getString(
+				ExecutionConfigOptions.TABLE_EXEC_SHUFFLE_MODE));
+		assertEquals(
+			OptimizerConfigOptions.TABLE_OPTIMIZER_BROADCAST_JOIN_THRESHOLD.defaultValue().longValue(),
+			tableEnv.getConfig().getConfiguration().getLong(
+				OptimizerConfigOptions.TABLE_OPTIMIZER_BROADCAST_JOIN_THRESHOLD));
 	}
 
 	private <T> ExecutionContext<T> createExecutionContext(String file, Map<String, String> replaceVars) throws Exception {
@@ -247,6 +304,7 @@ public class ExecutionContextTest {
 
 	private <T> ExecutionContext<T> createDefaultExecutionContext() throws Exception {
 		final Map<String, String> replaceVars = new HashMap<>();
+		replaceVars.put("$VAR_PLANNER", "old");
 		replaceVars.put("$VAR_EXECUTION_TYPE", "streaming");
 		replaceVars.put("$VAR_RESULT_MODE", "changelog");
 		replaceVars.put("$VAR_UPDATE_MODE", "update-mode: append");
@@ -254,8 +312,19 @@ public class ExecutionContextTest {
 		return createExecutionContext(DEFAULTS_ENVIRONMENT_FILE, replaceVars);
 	}
 
+	private <T> ExecutionContext<T> createModuleExecutionContext() throws Exception {
+		final Map<String, String> replaceVars = new HashMap<>();
+		replaceVars.put("$VAR_PLANNER", "old");
+		replaceVars.put("$VAR_EXECUTION_TYPE", "streaming");
+		replaceVars.put("$VAR_RESULT_MODE", "changelog");
+		replaceVars.put("$VAR_UPDATE_MODE", "update-mode: append");
+		replaceVars.put("$VAR_MAX_ROWS", "100");
+		return createExecutionContext(MODULES_ENVIRONMENT_FILE, replaceVars);
+	}
+
 	private <T> ExecutionContext<T> createCatalogExecutionContext() throws Exception {
 		final Map<String, String> replaceVars = new HashMap<>();
+		replaceVars.put("$VAR_PLANNER", "old");
 		replaceVars.put("$VAR_EXECUTION_TYPE", "streaming");
 		replaceVars.put("$VAR_RESULT_MODE", "changelog");
 		replaceVars.put("$VAR_UPDATE_MODE", "update-mode: append");
@@ -269,5 +338,9 @@ public class ExecutionContextTest {
 		replaceVars.put("$VAR_CONNECTOR_PROPERTY", DummyTableSourceFactory.TEST_PROPERTY);
 		replaceVars.put("$VAR_CONNECTOR_PROPERTY_VALUE", "");
 		return createExecutionContext(STREAMING_ENVIRONMENT_FILE, replaceVars);
+	}
+
+	private <T> ExecutionContext<T> createConfigurationExecutionContext() throws Exception {
+		return createExecutionContext(CONFIGURATION_ENVIRONMENT_FILE, new HashMap<>());
 	}
 }

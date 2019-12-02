@@ -19,7 +19,7 @@
 package org.apache.flink.test.runtime;
 
 import org.apache.flink.api.common.ExecutionConfig;
-import org.apache.flink.api.common.JobSubmissionResult;
+import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.client.program.MiniClusterClient;
 import org.apache.flink.configuration.CheckpointingOptions;
@@ -38,10 +38,12 @@ import org.apache.flink.runtime.jobmaster.JobResult;
 import org.apache.flink.runtime.minicluster.MiniCluster;
 import org.apache.flink.runtime.minicluster.MiniClusterConfiguration;
 import org.apache.flink.runtime.testtasks.NoOpInvokable;
+import org.apache.flink.testutils.junit.category.AlsoRunWithSchedulerNG;
 import org.apache.flink.util.FlinkException;
 import org.apache.flink.util.TestLogger;
 
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import javax.annotation.Nonnull;
 
@@ -56,6 +58,7 @@ import static org.junit.Assert.assertThat;
 /**
  * IT case for testing Flink's scheduling strategies.
  */
+@Category(AlsoRunWithSchedulerNG.class)
 public class SchedulingITCase extends TestLogger {
 
 	/**
@@ -115,12 +118,11 @@ public class SchedulingITCase extends TestLogger {
 			MiniClusterClient miniClusterClient = new MiniClusterClient(configuration, miniCluster);
 
 			JobGraph jobGraph = createJobGraph(slotIdleTimeout << 1, parallelism);
-			CompletableFuture<JobSubmissionResult> submissionFuture = miniClusterClient.submitJob(jobGraph);
 
 			// wait for the submission to succeed
-			JobSubmissionResult jobSubmissionResult = submissionFuture.get();
+			JobID jobID = miniClusterClient.submitJob(jobGraph).get();
 
-			CompletableFuture<JobResult> resultFuture = miniClusterClient.requestJobResult(jobSubmissionResult.getJobID());
+			CompletableFuture<JobResult> resultFuture = miniClusterClient.requestJobResult(jobID);
 
 			JobResult jobResult = resultFuture.get();
 

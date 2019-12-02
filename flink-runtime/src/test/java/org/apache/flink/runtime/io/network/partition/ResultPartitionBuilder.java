@@ -103,17 +103,17 @@ public class ResultPartitionBuilder {
 		return this;
 	}
 
-	private ResultPartitionBuilder setNetworkBuffersPerChannel(int networkBuffersPerChannel) {
+	public ResultPartitionBuilder setNetworkBuffersPerChannel(int networkBuffersPerChannel) {
 		this.networkBuffersPerChannel = networkBuffersPerChannel;
 		return this;
 	}
 
-	private ResultPartitionBuilder setFloatingNetworkBuffersPerGate(int floatingNetworkBuffersPerGate) {
+	public ResultPartitionBuilder setFloatingNetworkBuffersPerGate(int floatingNetworkBuffersPerGate) {
 		this.floatingNetworkBuffersPerGate = floatingNetworkBuffersPerGate;
 		return this;
 	}
 
-	public ResultPartitionBuilder setNetworkBufferSize(int networkBufferSize) {
+	ResultPartitionBuilder setNetworkBufferSize(int networkBufferSize) {
 		this.networkBufferSize = networkBufferSize;
 		return this;
 	}
@@ -129,7 +129,8 @@ public class ResultPartitionBuilder {
 		return this;
 	}
 
-	public ResultPartitionBuilder setBoundedBlockingSubpartitionType(BoundedBlockingSubpartitionType blockingSubpartitionType) {
+	ResultPartitionBuilder setBoundedBlockingSubpartitionType(
+			@SuppressWarnings("SameParameterValue") BoundedBlockingSubpartitionType blockingSubpartitionType) {
 		this.blockingSubpartitionType = blockingSubpartitionType;
 		return this;
 	}
@@ -142,7 +143,8 @@ public class ResultPartitionBuilder {
 			blockingSubpartitionType,
 			networkBuffersPerChannel,
 			floatingNetworkBuffersPerGate,
-			networkBufferSize);
+			networkBufferSize,
+			releasedOnConsumption);
 
 		FunctionWithException<BufferPoolOwner, BufferPool, IOException> factory = bufferPoolFactory.orElseGet(() ->
 			resultPartitionFactory.createBufferPoolFactory(numberOfSubpartitions, partitionType));
@@ -153,7 +155,6 @@ public class ResultPartitionBuilder {
 			partitionType,
 			numberOfSubpartitions,
 			numTargetKeyGroups,
-			releasedOnConsumption,
 			factory);
 	}
 }

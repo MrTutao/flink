@@ -30,7 +30,7 @@ Get a Flink example program up and running in a few simple steps.
 
 ## Setup: Download and Start Flink
 
-Flink runs on __Linux, Mac OS X, and Windows__. To be able to run Flink, the only requirement is to have a working __Java 8.x__ installation. Windows users, please take a look at the [Flink on Windows]({{ site.baseurl }}/tutorials/flink_on_windows.html) guide which describes how to run Flink on Windows for local setups.
+Flink runs on __Linux, Mac OS X, and Windows__. To be able to run Flink, the only requirement is to have a working __Java 8.x__ installation. Windows users, please take a look at the [Flink on Windows]({{ site.baseurl }}/getting-started/tutorials/flink_on_windows.html) guide which describes how to run Flink on Windows for local setups.
 
 You can check the correct installation of Java by issuing the following command:
 
@@ -50,9 +50,9 @@ Java HotSpot(TM) 64-Bit Server VM (build 25.111-b14, mixed mode)
 <div class="codetabs" markdown="1">
 
 <div data-lang="Download and Unpack" markdown="1">
-1. Download a binary from the [downloads page](http://flink.apache.org/downloads.html). You can pick
-   any Hadoop/Scala combination you like. If you plan to just use the local file system, any Hadoop
-   version will work fine.
+1. Download a binary from the [downloads page](https://flink.apache.org/downloads.html). You can pick
+   any Scala variant you like. For certain features you may also have to download one of the pre-bundled Hadoop jars
+   and place them into the `/lib` directory.
 2. Go to the download directory.
 3. Unpack the downloaded archive.
 
@@ -78,7 +78,7 @@ Version: 1.2.0, Commit ID: 1c659cf
 
 {% else %}
 ### Download and Compile
-Clone the source code from one of our [repositories](http://flink.apache.org/community.html#source-code), e.g.:
+Clone the source code from one of our [repositories](https://flink.apache.org/community.html#source-code), e.g.:
 
 {% highlight bash %}
 $ git clone https://github.com/apache/flink.git
@@ -111,7 +111,7 @@ INFO ... - ResourceManager akka.tcp://flink@localhost:6123/user/resourcemanager 
 INFO ... - Starting the SlotManager.
 INFO ... - Dispatcher akka.tcp://flink@localhost:6123/user/dispatcher was granted leadership ...
 INFO ... - Recovering all persisted jobs.
-INFO ... - Registering TaskManager ... under ... at the SlotManager.
+INFO ... - Registering TaskManager ... at ResourceManager
 {% endhighlight %}
 
 ## Read the Code
@@ -292,6 +292,6 @@ $ ./bin/stop-cluster.sh
 
 ## Next Steps
 
-Check out some more [examples]({{ site.baseurl }}/examples) to get a better feel for Flink's programming APIs. When you are done with that, go ahead and read the [streaming guide]({{ site.baseurl }}/dev/datastream_api.html).
+Check out some more [examples]({{ site.baseurl }}/getting-started/examples) to get a better feel for Flink's programming APIs. When you are done with that, go ahead and read the [streaming guide]({{ site.baseurl }}/dev/datastream_api.html).
 
 {% top %}

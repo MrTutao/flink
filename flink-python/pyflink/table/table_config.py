@@ -15,20 +15,31 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-import sys
 
 from py4j.compat import long
+
+from pyflink.common import Configuration, SqlDialect
 from pyflink.java_gateway import get_gateway
 
 __all__ = ['TableConfig']
 
-if sys.version > '3':
-    unicode = str
-
 
 class TableConfig(object):
     """
-    A config to define the runtime behavior of the Table API.
+    Configuration for the current :class:`TableEnvironment` session to adjust Table & SQL API
+    programs.
+
+    For common or important configuration options, this class provides getters and setters methods
+    with detailed inline documentation.
+
+    For more advanced configuration, users can directly access the underlying key-value map via
+    :func:`~pyflink.table.TableConfig.get_configuration`. Currently, key-value options are only
+    supported for the Blink planner.
+
+    .. note::
+
+        Because options are read at different point in time when performing operations, it is
+        recommended to set configuration options early after instantiating a table environment.
     """
 
     def __init__(self, j_table_config=None):
@@ -54,7 +65,7 @@ class TableConfig(object):
                             such as "America/Los_Angeles", or a custom timezone_id such as
                             "GMT-8:00".
         """
-        if timezone_id is not None and isinstance(timezone_id, (str, unicode)):
+        if timezone_id is not None and isinstance(timezone_id, str):
             j_timezone = get_gateway().jvm.java.time.ZoneId.of(timezone_id)
             self._j_table_config.setLocalTimeZone(j_timezone)
         else:
@@ -226,6 +237,42 @@ class TableConfig(object):
         precision = j_math_context.getPrecision()
         rounding_mode = j_math_context.getRoundingMode().name()
         return precision, rounding_mode
+
+    def get_configuration(self):
+        """
+        Gives direct access to the underlying key-value map for advanced configuration.
+
+        :return: Entire key-value configuration.
+        :rtype: Configuration
+        """
+        return Configuration(j_configuration=self._j_table_config.getConfiguration())
+
+    def add_configuration(self, configuration):
+        """
+        Adds the given key-value configuration to the underlying configuration. It overwrites
+        existing keys.
+
+        :param configuration: Key-value configuration to be added.
+        :type configuration: Configuration
+        """
+        self._j_table_config.addConfiguration(configuration._j_configuration)
+
+    def get_sql_dialect(self):
+        """
+        Returns the current SQL dialect.
+
+        :rtype: SqlDialect
+        """
+        return SqlDialect._from_j_sql_dialect(self._j_table_config.getSqlDialect())
+
+    def set_sql_dialect(self, sql_dialect):
+        """
+        Sets the current SQL dialect to parse a SQL query. Flink's SQL behavior by default.
+
+        :param sql_dialect: The given SQL dialect.
+        :type sql_dialect: SqlDialect
+        """
+        self._j_table_config.setSqlDialect(SqlDialect._to_j_sql_dialect(sql_dialect))
 
     @staticmethod
     def get_default():

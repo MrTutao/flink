@@ -15,7 +15,6 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-import sys
 
 from py4j.java_gateway import get_method
 from pyflink.java_gateway import get_gateway
@@ -23,9 +22,6 @@ from pyflink.table.table_schema import TableSchema
 
 from pyflink.table.window import GroupWindow
 from pyflink.util.utils import to_jarray
-
-if sys.version > '3':
-    xrange = range
 
 __all__ = ['Table', 'GroupedTable', 'GroupWindowedTable', 'OverWindowedTable', 'WindowGroupedTable']
 
@@ -246,6 +242,57 @@ class Table(object):
         :return: The result :class:`Table`.
         """
         return Table(self._j_table.fullOuterJoin(right._j_table, join_predicate))
+
+    def join_lateral(self, table_function_call, join_predicate=None):
+        """
+        Joins this Table with an user-defined TableFunction. This join is similar to a SQL inner
+        join but works with a table function. Each row of the table is joined with the rows
+        produced by the table function.
+
+        Example:
+        ::
+
+            >>> t_env.register_java_function("split", "java.table.function.class.name")
+            >>> tab.join_lateral("split(text, ' ') as (b)", "a = b")
+
+        :param table_function_call: An expression representing a table function call.
+        :type table_function_call: str
+        :param join_predicate: Optional, The join predicate expression string, join ON TRUE if not
+                               exist.
+        :type join_predicate: str
+        :return: The result Table.
+        :rtype: Table
+        """
+        if join_predicate is None:
+            return Table(self._j_table.joinLateral(table_function_call))
+        else:
+            return Table(self._j_table.joinLateral(table_function_call, join_predicate))
+
+    def left_outer_join_lateral(self, table_function_call, join_predicate=None):
+        """
+        Joins this Table with an user-defined TableFunction. This join is similar to
+        a SQL left outer join but works with a table function. Each row of the table is joined
+        with all rows produced by the table function. If the join does not produce any row, the
+        outer row is padded with nulls.
+
+        Example:
+        ::
+
+            >>> t_env.register_java_function("split", "java.table.function.class.name")
+            >>> tab.left_outer_join_lateral("split(text, ' ') as (b)")
+
+        :param table_function_call: An expression representing a table function call.
+        :type table_function_call: str
+        :param join_predicate: Optional, The join predicate expression string, join ON TRUE if not
+                               exist.
+        :type join_predicate: str
+        :return: The result Table.
+        :rtype: Table
+        """
+        if join_predicate is None:
+            return Table(self._j_table.leftOuterJoinLateral(table_function_call))
+        else:
+            return Table(self._j_table.leftOuterJoinLateral(table_function_call, join_predicate))
 
     def minus(self, right):
         """
@@ -561,7 +608,7 @@ class Table(object):
         """
         return Table(self._j_table.dropColumns(fields))
 
-    def insert_into(self, table_path, *table_path_continued):
+    def insert_into(self, table_path):
         """
         Writes the :class:`Table` to a :class:`TableSink` that was registered under
         the specified name. For the path resolution algorithm see
@@ -572,15 +619,10 @@ class Table(object):
 
             >>> tab.insert_into("sink")
 
-        :param table_path: The first part of the path of the registered :class:`TableSink` to which
-               the :class:`Table` is written. This is to ensure at least the name of the
-               :class:`Table` is provided.
-        :param table_path_continued: The remaining part of the path of the registered
-                :class:`TableSink` to which the :class:`Table`  is written.
+        :param table_path: The path of the registered :class:`TableSink` to which
+               the :class:`Table` is written.
         """
-        gateway = get_gateway()
-        j_table_path = to_jarray(gateway.jvm.String, table_path_continued)
-        self._j_table.insertInto(table_path, j_table_path)
+        self._j_table.insertInto(table_path)
 
     def get_schema(self):
         """

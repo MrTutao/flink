@@ -20,8 +20,8 @@ package org.apache.flink.table.catalog
 
 import org.apache.flink.api.scala.ExecutionEnvironment
 import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
-import org.apache.flink.table.api.{TableEnvironment, TableException}
 import org.apache.flink.table.api.scala.{BatchTableEnvironment, StreamTableEnvironment}
+import org.apache.flink.table.api.{TableEnvironment, ValidationException}
 import org.apache.flink.table.factories.utils.TestCollectionTableFactory
 import org.apache.flink.types.Row
 
@@ -113,7 +113,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  b varchar,
         |  c int
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val sinkDDL =
@@ -123,7 +123,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  b varchar,
         |  c int
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val query =
@@ -149,7 +149,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  b varchar,
         |  c int
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val sinkDDL =
@@ -159,7 +159,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  b varchar,
         |  c as a + 1
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val query =
@@ -198,7 +198,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  b int,
         |  c int
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val sinkDDL =
@@ -209,7 +209,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  c int,
         |  d int
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val query =
@@ -253,7 +253,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  b int,
         |  c int
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val sinkDDL =
@@ -262,7 +262,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  a int,
         |  b int
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val query =
@@ -293,7 +293,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  c as proctime,
         |  primary key(a)
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val sinkDDL =
@@ -302,7 +302,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  a int,
         |  b int
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val query =
@@ -318,7 +318,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
     assertEquals(TestCollectionTableFactory.RESULT.sorted, sourceData.sorted)
   }
 
-  @Test @Ignore // need to implement
+  @Test @Ignore("FLINK-14320") // need to implement
   def testStreamSourceTableWithRowtime(): Unit = {
     val sourceData = List(
       toRow(1, 1000),
@@ -329,27 +329,26 @@ class CatalogTableITCase(isStreaming: Boolean) {
     val sourceDDL =
       """
         |create table t1(
-        |  a bigint,
+        |  a timestamp(3),
         |  b bigint,
-        |  primary key(a),
-        |  WATERMARK wm FOR a AS BOUNDED WITH DELAY 1000 MILLISECOND
+        |  WATERMARK FOR a AS a - interval '1' SECOND
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val sinkDDL =
       """
         |create table t2(
-        |  a bigint,
+        |  a timestamp(3),
         |  b bigint
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val query =
       """
         |insert into t2
-        |select sum(a), sum(b) from t1 group by TUMBLE(wm, INTERVAL '1' SECOND)
+        |select a, sum(b) from t1 group by TUMBLE(a, INTERVAL '1' SECOND)
       """.stripMargin
 
     tableEnv.sqlUpdate(sourceDDL)
@@ -375,7 +374,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  c as proctime,
         |  primary key(a)
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val sinkDDL =
@@ -384,7 +383,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  a int,
         |  b int
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val query =
@@ -400,7 +399,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
     assertEquals(TestCollectionTableFactory.RESULT.sorted, sourceData.sorted)
   }
 
-  @Test @Ignore // need to implement
+  @Test @Ignore("FLINK-14320") // need to implement
   def testBatchTableWithRowtime(): Unit = {
     val sourceData = List(
       toRow(1, 1000),
@@ -411,27 +410,26 @@ class CatalogTableITCase(isStreaming: Boolean) {
     val sourceDDL =
       """
         |create table t1(
-        |  a bigint,
+        |  a timestamp(3),
         |  b bigint,
-        |  primary key(a),
-        |  WATERMARK wm FOR a AS BOUNDED WITH DELAY 1000 MILLISECOND
+        |  WATERMARK FOR a AS a - interval '1' SECOND
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val sinkDDL =
       """
         |create table t2(
-        |  a bigint,
+        |  a timestamp(3),
         |  b bigint
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val query =
       """
         |insert into t2
-        |select sum(a), sum(b) from t1 group by TUMBLE(wm, INTERVAL '1' SECOND)
+        |select a, sum(b) from t1 group by TUMBLE(a, INTERVAL '1' SECOND)
       """.stripMargin
 
     tableEnv.sqlUpdate(sourceDDL)
@@ -450,7 +448,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  b bigint,
         |  c varchar
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val ddl2 =
@@ -459,7 +457,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  a bigint,
         |  b bigint
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
 
@@ -479,7 +477,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  b bigint,
         |  c varchar
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
     val ddl2 =
@@ -488,7 +486,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  a bigint,
         |  b bigint
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
 
@@ -500,7 +498,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
     assert(tableEnv.listTables().isEmpty)
   }
 
-  @Test(expected = classOf[TableException])
+  @Test(expected = classOf[ValidationException])
   def testDropTableWithInvalidPath(): Unit = {
     val ddl1 =
       """
@@ -509,14 +507,13 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  b bigint,
         |  c varchar
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
 
     tableEnv.sqlUpdate(ddl1)
     assert(tableEnv.listTables().sameElements(Array[String]("t1")))
     tableEnv.sqlUpdate("DROP TABLE catalog1.database1.t1")
-    assert(tableEnv.listTables().isEmpty)
   }
 
   @Test
@@ -528,7 +525,7 @@ class CatalogTableITCase(isStreaming: Boolean) {
         |  b bigint,
         |  c varchar
         |) with (
-        |  connector = 'COLLECTION'
+        |  'connector' = 'COLLECTION'
         |)
       """.stripMargin
 
@@ -536,6 +533,16 @@ class CatalogTableITCase(isStreaming: Boolean) {
     assert(tableEnv.listTables().sameElements(Array[String]("t1")))
     tableEnv.sqlUpdate("DROP TABLE IF EXISTS catalog1.database1.t1")
     assert(tableEnv.listTables().sameElements(Array[String]("t1")))
+  }
+
+  @Test
+  def testUseCatalog(): Unit = {
+    tableEnv.registerCatalog("cat1", new GenericInMemoryCatalog("cat1"))
+    tableEnv.registerCatalog("cat2", new GenericInMemoryCatalog("cat2"))
+    tableEnv.sqlUpdate("use catalog cat1")
+    assertEquals("cat1", tableEnv.getCurrentCatalog)
+    tableEnv.sqlUpdate("use catalog cat2")
+    assertEquals("cat2", tableEnv.getCurrentCatalog)
   }
 }
 

@@ -17,7 +17,10 @@
 ################################################################################
 import os
 import tempfile
+import warnings
 from abc import ABCMeta, abstractmethod
+
+from py4j.java_gateway import get_java_class, get_method
 
 from pyflink.serializers import BatchedSerializer, PickleSerializer
 from pyflink.table.catalog import Catalog
@@ -40,13 +43,40 @@ __all__ = [
 
 class TableEnvironment(object):
     """
-    The abstract base class for batch and stream TableEnvironments.
+    A table environment is the base class, entry point, and central context for creating Table
+    and SQL API programs.
+
+    It is unified for bounded and unbounded data processing.
+
+    A table environment is responsible for:
+
+        - Connecting to external systems.
+        - Registering and retrieving :class:`Table` and other meta objects from a catalog.
+        - Executing SQL statements.
+        - Offering further configuration options.
+
+    The path in methods such as :func:`create_temporary_view`
+    should be a proper SQL identifier. The syntax is following
+    [[catalog-name.]database-name.]object-name, where the catalog name and database are optional.
+    For path resolution see :func:`use_catalog` and :func:`use_database`. All keywords or other
+    special characters need to be escaped.
+
+    Example: `cat.1`.`db`.`Table` resolves to an object named 'Table' (table is a reserved
+    keyword, thus must be escaped) in a catalog named 'cat.1' and database named 'db'.
+
+    .. note::
+
+        This environment is meant for pure table programs. If you would like to convert from or to
+        other Flink APIs, it might be necessary to use one of the available language-specific table
+        environments in the corresponding bridging modules.
+
     """
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, j_tenv, serializer=PickleSerializer()):
+    def __init__(self, j_tenv, is_blink_planner, serializer=PickleSerializer()):
         self._j_tenv = j_tenv
+        self._is_blink_planner = is_blink_planner
         self._serializer = serializer
 
     def from_table_source(self, table_source):
@@ -102,7 +132,10 @@ class TableEnvironment(object):
 
         :param name: The name under which the table will be registered.
         :param table: The table to register.
+
+        .. note:: Deprecated in 1.10. Use :func:`create_temporary_view` instead.
         """
+        warnings.warn("Deprecated in 1.10. Use create_temporary_view instead.", DeprecationWarning)
         self._j_tenv.registerTable(name, table._j_table)
 
     def register_table_source(self, name, table_source):
@@ -121,7 +154,10 @@ class TableEnvironment(object):
 
         :param name: The name under which the :class:`TableSource` is registered.
         :param table_source: The :class:`TableSource` to register.
+
+        .. note:: Deprecated in 1.10. Use :func:`connect` instead.
         """
+        warnings.warn("Deprecated in 1.10. Use connect instead.", DeprecationWarning)
         self._j_tenv.registerTableSource(name, table_source._j_table_source)
 
     def register_table_sink(self, name, table_sink):
@@ -141,7 +177,10 @@ class TableEnvironment(object):
 
         :param name: The name under which the :class:`TableSink` is registered.
         :param table_sink: The :class:`TableSink` to register.
+
+        .. note:: Deprecated in 1.10. Use :func:`connect` instead.
         """
+        warnings.warn("Deprecated in 1.10. Use connect instead.", DeprecationWarning)
         self._j_tenv.registerTableSink(name, table_sink._j_table_sink)
 
     def scan(self, *table_path):
@@ -168,34 +207,68 @@ class TableEnvironment(object):
         :param table_path: The path of the table to scan.
         :throws: Exception if no table is found using the given table path.
         :return: The resulting :class:`Table`
+
+        .. note:: Deprecated in 1.10. Use :func:`from_path` instead.
         """
+        warnings.warn("Deprecated in 1.10. Use from_path instead.", DeprecationWarning)
         gateway = get_gateway()
         j_table_paths = utils.to_jarray(gateway.jvm.String, table_path)
         j_table = self._j_tenv.scan(j_table_paths)
         return Table(j_table)
 
-    def insert_into(self, table, table_path, *table_path_continued):
+    def from_path(self, path):
         """
-        Writes the :class:`Table` to a :class:`TableSink` that was registered under
-        the specified name. For the path resolution algorithm see
-        :func:`~TableEnvironment.use_database`.
+        Reads a registered table and returns the resulting :class:`Table`.
+
+        A table to scan must be registered in the :class:`TableEnvironment`.
+
+        See the documentation of :func:`use_database` or :func:`use_catalog` for the rules on the
+        path resolution.
+
+        Examples:
+
+        Reading a table from default catalog and database.
+        ::
+
+            >>> tab = table_env.from_path("tableName")
+
+        Reading a table from a registered catalog.
+        ::
+
+            >>> tab = table_env.from_path("catalogName.dbName.tableName")
+
+        Reading a table from a registered catalog with escaping. (`Table` is a reserved keyword).
+        Dots in e.g. a database name also must be escaped.
+        ::
+
+            >>> tab = table_env.from_path("catalogName.`db.Name`.`Table`")
+
+        :param path: The path of a table API object to scan.
+        :return: Either a table or virtual table (=view).
+
+        .. seealso:: :func:`user_catalog`
+        .. seealso:: :func:`user_database`
+        """
+        return Table(get_method(self._j_tenv, "from")(path))
+
+    def insert_into(self, target_path, table):
+        """
+        Instructs to write the content of a :class:`Table` API object into a table.
+
+        See the documentation of :func:`use_database` or :func:`use_catalog` for the rules on the
+        path resolution.
 
         Example:
         ::
 
             >>> tab = table_env.scan("tableName")
-            >>> table_env.insert_into(tab, "sink")
+            >>> table_env.insert_into("sink", tab)
 
-        :param table: :class:`Table` to write to the sink.
-        :param table_path: The first part of the path of the registered :class:`TableSink` to which
-               the :class:`Table` is written. This is to ensure at least the name of the
-               :class:`Table` is provided.
-        :param table_path_continued: The remaining part of the path of the registered
-                :class:`TableSink` to which the :class:`Table`  is written.
+        :param target_path: The path of the registered :class:`TableSink` to which the
+                            :class:`Table` is written.
+        :param table: table The Table to write to the sink.
         """
-        gateway = get_gateway()
-        j_table_path = utils.to_jarray(gateway.jvm.String, table_path_continued)
-        self._j_tenv.insertInto(table._j_table, table_path, j_table_path)
+        self._j_tenv.insertInto(target_path, table._j_table)
 
     def list_catalogs(self):
         """
@@ -205,6 +278,15 @@ class TableEnvironment(object):
         """
         j_catalog_name_array = self._j_tenv.listCatalogs()
         return [item for item in j_catalog_name_array]
+
+    def list_modules(self):
+        """
+        Gets the names of all modules registered in this environment.
+
+        :return: List of module names.
+        """
+        j_module_name_array = self._j_tenv.listModules()
+        return [item for item in j_module_name_array]
 
     def list_databases(self):
         """
@@ -224,15 +306,89 @@ class TableEnvironment(object):
         j_table_name_array = self._j_tenv.listTables()
         return [item for item in j_table_name_array]
 
-    def explain(self, table):
+    def list_user_defined_functions(self):
+        """
+        Gets the names of all user defined functions registered in this environment.
+
+        :return: List of the names of all user defined functions registered in this environment.
+        :rtype: list[str]
+        """
+        j_udf_name_array = self._j_tenv.listUserDefinedFunctions()
+        return [item for item in j_udf_name_array]
+
+    def list_functions(self):
+        """
+        Gets the names of all functions in this environment.
+
+        :return: List of the names of all functions in this environment.
+        :rtype: list[str]
+        """
+        j_function_name_array = self._j_tenv.listFunctions()
+        return [item for item in j_function_name_array]
+
+    def list_temporary_tables(self):
+        """
+        Gets the names of all temporary tables and views available in the current namespace
+        (the current database of the current catalog).
+
+        :return: A list of the names of all registered temporary tables and views in the current
+                 database of the current catalog.
+
+        .. seealso:: :func:`list_tables`
+        """
+        j_table_name_array = self._j_tenv.listTemporaryTables()
+        return [item for item in j_table_name_array]
+
+    def list_temporary_views(self):
+        """
+        Gets the names of all temporary views available in the current namespace (the current
+        database of the current catalog).
+
+        :return: A list of the names of all registered temporary views in the current database
+                 of the current catalog.
+
+        .. seealso:: :func:`list_tables`
+        """
+        j_view_name_array = self._j_tenv.listTemporaryViews()
+        return [item for item in j_view_name_array]
+
+    def drop_temporary_table(self, table_path):
+        """
+        Drops a temporary table registered in the given path.
+
+        If a permanent table with a given path exists, it will be used
+        from now on for any queries that reference this path.
+
+        :return: true if a table existed in the given path and was removed
+        """
+        return self._j_tenv.dropTemporaryTable(table_path)
+
+    def drop_temporary_view(self, view_path):
+        """
+        Drops a temporary view registered in the given path.
+
+        If a permanent table or view with a given path exists, it will be used
+        from now on for any queries that reference this path.
+
+        :return: true if a view existed in the given path and was removed
+        """
+        return self._j_tenv.dropTemporaryView(view_path)
+
+    def explain(self, table=None, extended=False):
         """
         Returns the AST of the specified Table API and SQL queries and the execution plan to compute
-        the result of the given :class:`Table`.
+        the result of the given :class:`Table` or multi-sinks plan.
 
-        :param table: The table to be explained.
+        :param table: The table to be explained. If table is None, explain for multi-sinks plan,
+                      else for given table.
+        :param extended: If the plan should contain additional properties.
+                         e.g. estimated cost, traits
         :return: The table for which the AST and execution plan will be returned.
         """
-        return self._j_tenv.explain(table._j_table)
+        if table is None:
+            return self._j_tenv.explain(extended)
+        else:
+            return self._j_tenv.explain(table._j_table, extended)
 
     def sql_query(self, query):
         """
@@ -285,9 +441,9 @@ class TableEnvironment(object):
                 b bigint,
                 c varchar
             ) with (
-                connector.type = 'filesystem',
-                format.type = 'csv',
-                connector.path = 'xxx'
+                'connector.type' = 'filesystem',
+                'format.type' = 'csv',
+                'connector.path' = 'xxx'
             )
 
         SQL queries can directly execute as follows:
@@ -299,11 +455,11 @@ class TableEnvironment(object):
             ...     a int,
             ...     b varchar
             ... ) with (
-            ...     connector.type = 'kafka',
-            ...     `update-mode` = 'append',
-            ...     connector.topic = 'xxx',
-            ...     connector.properties.0.key = 'k0',
-            ...     connector.properties.0.value = 'v0'
+            ...     'connector.type' = 'kafka',
+            ...     'update-mode' = 'append',
+            ...     'connector.topic' = 'xxx',
+            ...     'connector.properties.0.key' = 'k0',
+            ...     'connector.properties.0.value' = 'v0'
             ... )
             ... '''
 
@@ -313,9 +469,9 @@ class TableEnvironment(object):
             ...     a int,
             ...     b varchar
             ... ) with (
-            ...     connector.type = 'filesystem',
-            ...     format.type = 'csv',
-            ...     connector.path = 'xxx'
+            ...     'connector.type' = 'filesystem',
+            ...     'format.type' = 'csv',
+            ...     'connector.path' = 'xxx'
             ... )
             ... '''
 
@@ -491,6 +647,74 @@ class TableEnvironment(object):
         """
         pass
 
+    def register_java_function(self, name, function_class_name):
+        """
+        Registers a java user defined function under a unique name. Replaces already existing
+        user-defined functions under this name. The acceptable function type contains
+        **ScalarFunction**, **TableFunction** and **AggregateFunction**.
+
+        Example:
+        ::
+
+            >>> table_env.register_java_function("func1", "java.user.defined.function.class.name")
+
+        :param name: The name under which the function is registered.
+        :type name: str
+        :param function_class_name: The java full qualified class name of the function to register.
+                                    The function must have a public no-argument constructor and can
+                                    be founded in current Java classloader.
+        :type function_class_name: str
+        """
+        gateway = get_gateway()
+        java_function = gateway.jvm.Thread.currentThread().getContextClassLoader()\
+            .loadClass(function_class_name).newInstance()
+        self._j_tenv.registerFunction(name, java_function)
+
+    def register_function(self, name, function):
+        """
+        Registers a python user-defined function under a unique name. Replaces already existing
+        user-defined function under this name.
+
+        Example:
+        ::
+
+            >>> table_env.register_function(
+            ...     "add_one", udf(lambda i: i + 1, DataTypes.BIGINT(), DataTypes.BIGINT()))
+
+            >>> @udf(input_types=[DataTypes.BIGINT(), DataTypes.BIGINT()],
+            ...      result_type=DataTypes.BIGINT())
+            ... def add(i, j):
+            ...     return i + j
+            >>> table_env.register_function("add", add)
+
+            >>> class SubtractOne(ScalarFunction):
+            ...     def eval(self, i):
+            ...         return i - 1
+            >>> table_env.register_function(
+            ...     "subtract_one", udf(SubtractOne(), DataTypes.BIGINT(), DataTypes.BIGINT()))
+
+        :param name: The name under which the function is registered.
+        :type name: str
+        :param function: The python user-defined function to register.
+        :type function: UserDefinedFunctionWrapper
+        """
+        self._j_tenv.registerFunction(name, function._judf(self._is_blink_planner,
+                                                           self.get_config()._j_table_config))
+
+    def create_temporary_view(self, view_path, table):
+        """
+        Registers a :class:`Table` API object as a temporary view similar to SQL temporary views.
+
+        Temporary objects can shadow permanent ones. If a permanent object in a given path exists,
+        it will be inaccessible in the current session. To make the permanent object available
+        again you can drop the corresponding temporary object.
+
+        :param view_path: The path under which the view will be registered. See also the
+                          :class:`TableEnvironment` class description for the format of the path.
+        :param table: The view to register.
+        """
+        self._j_tenv.createTemporaryView(view_path, table._j_table)
+
     def execute(self, job_name):
         """
         Triggers the program execution. The environment will execute all parts of
@@ -627,27 +851,40 @@ class TableEnvironment(object):
                 serializer.dump_to_stream(elements, temp_file)
             finally:
                 temp_file.close()
-            return self._from_file(temp_file.name, schema)
+            row_type_info = _to_java_type(schema)
+            execution_config = self._get_execution_config(temp_file.name, schema)
+            gateway = get_gateway()
+            j_objs = gateway.jvm.PythonBridgeUtils.readPythonObjects(temp_file.name, True)
+            if self._is_blink_planner:
+                PythonTableUtils = gateway.jvm \
+                    .org.apache.flink.table.planner.utils.python.PythonTableUtils
+                PythonInputFormatTableSource = gateway.jvm \
+                    .org.apache.flink.table.planner.utils.python.PythonInputFormatTableSource
+            else:
+                PythonTableUtils = gateway.jvm.PythonTableUtils
+                PythonInputFormatTableSource = gateway.jvm.PythonInputFormatTableSource
+            j_input_format = PythonTableUtils.getInputFormat(
+                j_objs, row_type_info, execution_config)
+            j_table_source = PythonInputFormatTableSource(
+                j_input_format, row_type_info)
+
+            return Table(self._j_tenv.fromTableSource(j_table_source))
         finally:
             os.unlink(temp_file.name)
 
     @abstractmethod
-    def _from_file(self, filename, schema):
+    def _get_execution_config(self, filename, schema):
         pass
 
 
 class StreamTableEnvironment(TableEnvironment):
 
-    def __init__(self, j_tenv):
+    def __init__(self, j_tenv, is_blink_planner):
         self._j_tenv = j_tenv
-        super(StreamTableEnvironment, self).__init__(j_tenv)
+        super(StreamTableEnvironment, self).__init__(j_tenv, is_blink_planner)
 
-    def _from_file(self, filename, schema):
-        gateway = get_gateway()
-        jds = gateway.jvm.PythonBridgeUtils.createDataStreamFromFile(
-            self._j_tenv.execEnv(), filename, True)
-        return Table(gateway.jvm.PythonTableUtils.fromDataStream(
-            self._j_tenv, jds, _to_java_type(schema)))
+    def _get_execution_config(self, filename, schema):
+        return self._j_tenv.execEnv().getConfig()
 
     def get_config(self):
         """
@@ -691,50 +928,87 @@ class StreamTableEnvironment(TableEnvironment):
             self._j_tenv.connect(connector_descriptor._j_connector_descriptor))
 
     @staticmethod
-    def create(stream_execution_environment, table_config=None):
+    def create(stream_execution_environment, table_config=None, environment_settings=None):
         """
-        Creates a :class:`TableEnvironment` for a :class:`StreamExecutionEnvironment`
+        Creates a :class:`TableEnvironment` for a
+        :class:`~pyflink.datastream.StreamExecutionEnvironment`.
 
         Example:
         ::
 
             >>> env = StreamExecutionEnvironment.get_execution_environment()
-            # create without TableConfig
+            # create without optional parameters.
             >>> table_env = StreamTableEnvironment.create(env)
             # create with TableConfig
             >>> table_config = TableConfig()
             >>> table_config.set_null_check(False)
             >>> table_env = StreamTableEnvironment.create(env, table_config)
+            # create with EnvrionmentSettings
+            >>> environment_settings = EnvironmentSettings.new_instance().use_blink_planner() \\
+            ...     .build()
+            >>> table_env = StreamTableEnvironment.create(
+            ...     env, environment_settings=environment_settings)
 
-        :param stream_execution_environment: The :class:`StreamExecutionEnvironment` of the
-                                             TableEnvironment.
+
+        :param stream_execution_environment: The
+                                             :class:`~pyflink.datastream.StreamExecutionEnvironment`
+                                             of the TableEnvironment.
+        :type stream_execution_environment: pyflink.datastream.StreamExecutionEnvironment
         :param table_config: The configuration of the TableEnvironment, optional.
+        :type table_config: TableConfig
+        :param environment_settings: The environment settings used to instantiate the
+                                     TableEnvironment. It provides the interfaces about planner
+                                     selection(flink or blink), optional.
+        :type environment_settings: pyflink.table.EnvironmentSettings
         :return: The :class:`StreamTableEnvironment` created from given StreamExecutionEnvironment
                  and configuration.
+        :rtype: StreamTableEnvironment
         """
+        if table_config is not None and environment_settings is not None:
+            raise ValueError("The param 'table_config' and "
+                             "'environment_settings' cannot be used at the same time")
+
         gateway = get_gateway()
         if table_config is not None:
             j_tenv = gateway.jvm.StreamTableEnvironment.create(
                 stream_execution_environment._j_stream_execution_environment,
                 table_config._j_table_config)
+        elif environment_settings is not None:
+            if not environment_settings.is_streaming_mode():
+                raise ValueError("The environment settings for StreamTableEnvironment must be "
+                                 "set to streaming mode.")
+            j_tenv = gateway.jvm.StreamTableEnvironment.create(
+                stream_execution_environment._j_stream_execution_environment,
+                environment_settings._j_environment_settings)
         else:
             j_tenv = gateway.jvm.StreamTableEnvironment.create(
                 stream_execution_environment._j_stream_execution_environment)
-        return StreamTableEnvironment(j_tenv)
+        j_planner_class = j_tenv.getPlanner().getClass()
+        j_blink_planner_class = get_java_class(
+            get_gateway().jvm.org.apache.flink.table.planner.delegation.PlannerBase)
+        is_blink_planner = j_blink_planner_class.isAssignableFrom(j_planner_class)
+        return StreamTableEnvironment(j_tenv, is_blink_planner)
 
 
 class BatchTableEnvironment(TableEnvironment):
 
-    def __init__(self, j_tenv):
+    def __init__(self, j_tenv, is_blink_planner):
         self._j_tenv = j_tenv
-        super(BatchTableEnvironment, self).__init__(j_tenv)
+        super(BatchTableEnvironment, self).__init__(j_tenv, is_blink_planner)
 
-    def _from_file(self, filename, schema):
+    def _get_execution_config(self, filename, schema):
         gateway = get_gateway()
-        jds = gateway.jvm.PythonBridgeUtils.createDataSetFromFile(
-            self._j_tenv.execEnv(), filename, True)
-        return Table(gateway.jvm.PythonTableUtils.fromDataSet(
-            self._j_tenv, jds, _to_java_type(schema)))
+        blink_t_env_class = get_java_class(
+            gateway.jvm.org.apache.flink.table.api.internal.TableEnvironmentImpl)
+        is_blink = (blink_t_env_class == self._j_tenv.getClass())
+        if is_blink:
+            # we can not get ExecutionConfig object from the TableEnvironmentImpl
+            # for the moment, just create a new ExecutionConfig.
+            execution_config = gateway.jvm.org.apache.flink.api.common.ExecutionConfig()
+        else:
+            execution_config = self._j_tenv.execEnv().getConfig()
+
+        return execution_config
 
     def get_config(self):
         """
@@ -771,38 +1045,93 @@ class BatchTableEnvironment(TableEnvironment):
             ...     .register_table_source("MyTable")
 
         :param connector_descriptor: Connector descriptor describing the external system.
-        :return: A :class:`BatchTableDescriptor` used to build the table source/sink.
+        :type connector_descriptor: ConnectorDescriptor
+        :return: A :class:`BatchTableDescriptor` or a :class:`StreamTableDescriptor`
+                 (for blink planner) used to build the table source/sink.
+        :rtype: BatchTableDescriptor or StreamTableDescriptor
         """
-        # type: (ConnectorDescriptor) -> BatchTableDescriptor
-        return BatchTableDescriptor(
-            self._j_tenv.connect(connector_descriptor._j_connector_descriptor))
+        gateway = get_gateway()
+        blink_t_env_class = get_java_class(
+            gateway.jvm.org.apache.flink.table.api.internal.TableEnvironmentImpl)
+        if blink_t_env_class == self._j_tenv.getClass():
+            return StreamTableDescriptor(
+                self._j_tenv.connect(connector_descriptor._j_connector_descriptor))
+        else:
+            return BatchTableDescriptor(
+                self._j_tenv.connect(connector_descriptor._j_connector_descriptor))
 
     @staticmethod
-    def create(execution_environment, table_config=None):
+    def create(execution_environment=None, table_config=None, environment_settings=None):
         """
-        Creates a :class:`TableEnvironment` for a batch :class:`ExecutionEnvironment`.
+        Creates a :class:`BatchTableEnvironment`.
 
         Example:
         ::
 
+            # create with ExecutionEnvironment.
             >>> env = ExecutionEnvironment.get_execution_environment()
             >>> table_env = BatchTableEnvironment.create(env)
+            # create with ExecutionEnvironment and TableConfig.
             >>> table_config = TableConfig()
             >>> table_config.set_null_check(False)
             >>> table_env = BatchTableEnvironment.create(env, table_config)
+            # create with EnvironmentSettings.
+            >>> environment_settings = EnvironmentSettings.new_instance().in_batch_mode() \\
+            ...     .use_blink_planner().build()
+            >>> table_env = BatchTableEnvironment.create(environment_settings=environment_settings)
 
-        :param execution_environment: The batch :class:`ExecutionEnvironment` of the
-                                      TableEnvironment.
+        :param execution_environment: The batch :class:`pyflink.dataset.ExecutionEnvironment` of
+                                      the TableEnvironment.
+        :type execution_environment: pyflink.dataset.ExecutionEnvironment
         :param table_config: The configuration of the TableEnvironment, optional.
-        :return: The :class:`BatchTableEnvironment` created from given ExecutionEnvironment and
+        :type table_config: TableConfig
+        :param environment_settings: The environment settings used to instantiate the
+                                     TableEnvironment. It provides the interfaces about planner
+                                     selection(flink or blink), optional.
+        :type environment_settings: pyflink.table.EnvironmentSettings
+        :return: The BatchTableEnvironment created from given ExecutionEnvironment and
                  configuration.
+        :rtype: BatchTableEnvironment
         """
+        if execution_environment is None and \
+                table_config is None and \
+                environment_settings is None:
+            raise ValueError("No argument found, the param 'execution_environment' "
+                             "or 'environment_settings' is required.")
+        elif execution_environment is None and \
+                table_config is not None and \
+                environment_settings is None:
+            raise ValueError("Only the param 'table_config' is found, "
+                             "the param 'execution_environment' is also required.")
+        elif execution_environment is not None and \
+                environment_settings is not None:
+            raise ValueError("The param 'execution_environment' and "
+                             "'environment_settings' cannot be used at the same time")
+        elif table_config is not None and \
+                environment_settings is not None:
+            raise ValueError("The param 'table_config' and "
+                             "'environment_settings' cannot be used at the same time")
+
         gateway = get_gateway()
-        if table_config is not None:
-            j_tenv = gateway.jvm.BatchTableEnvironment.create(
-                execution_environment._j_execution_environment,
-                table_config._j_table_config)
-        else:
-            j_tenv = gateway.jvm.BatchTableEnvironment.create(
-                execution_environment._j_execution_environment)
-        return BatchTableEnvironment(j_tenv)
+        if execution_environment is not None and environment_settings is None:
+            if table_config is not None:
+                j_tenv = gateway.jvm.BatchTableEnvironment.create(
+                    execution_environment._j_execution_environment,
+                    table_config._j_table_config)
+            else:
+                j_tenv = gateway.jvm.BatchTableEnvironment.create(
+                    execution_environment._j_execution_environment)
+            return BatchTableEnvironment(j_tenv, False)
+        elif environment_settings is not None and \
+                execution_environment is None and \
+                table_config is None:
+            if environment_settings.is_streaming_mode():
+                raise ValueError("The environment settings for BatchTableEnvironment must be "
+                                 "set to batch mode.")
+            j_tenv = gateway.jvm.TableEnvironment.create(
+                environment_settings._j_environment_settings)
+            j_planner_class = j_tenv.getPlanner().getClass()
+            j_blink_planner_class = get_java_class(
+                get_gateway().jvm.org.apache.flink.table.planner.delegation.PlannerBase)
+            is_blink_planner = j_blink_planner_class.isAssignableFrom(j_planner_class)
+            return BatchTableEnvironment(j_tenv, is_blink_planner)

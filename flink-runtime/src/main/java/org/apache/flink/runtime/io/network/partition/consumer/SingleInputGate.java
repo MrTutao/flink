@@ -215,7 +215,8 @@ public class SingleInputGate extends InputGate {
 		requestPartitions();
 	}
 
-	private void requestPartitions() throws IOException, InterruptedException {
+	@VisibleForTesting
+	void requestPartitions() throws IOException, InterruptedException {
 		synchronized (requestLock) {
 			if (!requestedPartitionsFlag) {
 				if (closeFuture.isDone()) {
@@ -278,9 +279,7 @@ public class SingleInputGate extends InputGate {
 				int totalBuffers = 0;
 
 				for (InputChannel channel : inputChannels.values()) {
-					if (channel instanceof RemoteInputChannel) {
-						totalBuffers += ((RemoteInputChannel) channel).getNumberOfQueuedBuffers();
-					}
+					totalBuffers += channel.unsynchronizedGetNumberOfQueuedBuffers();
 				}
 
 				return  totalBuffers;
@@ -517,7 +516,7 @@ public class SingleInputGate extends InputGate {
 				}
 
 				if (inputChannelsWithData.isEmpty()) {
-					resetIsAvailable();
+					availabilityHelper.resetUnavailable();
 				}
 
 				if (result.isPresent()) {
@@ -560,7 +559,6 @@ public class SingleInputGate extends InputGate {
 					markAvailable();
 				}
 
-				currentChannel.notifySubpartitionConsumed();
 				currentChannel.releaseAllResources();
 			}
 
@@ -569,12 +567,11 @@ public class SingleInputGate extends InputGate {
 	}
 
 	private void markAvailable() {
-		CompletableFuture<?> toNotfiy;
+		CompletableFuture<?> toNotify;
 		synchronized (inputChannelsWithData) {
-			toNotfiy = isAvailable;
-			isAvailable = AVAILABLE;
+			toNotify = availabilityHelper.getUnavailableToResetAvailable();
 		}
-		toNotfiy.complete(null);
+		toNotify.complete(null);
 	}
 
 	@Override
@@ -601,8 +598,8 @@ public class SingleInputGate extends InputGate {
 	void triggerPartitionStateCheck(ResultPartitionID partitionId) {
 		partitionProducerStateProvider.requestPartitionProducerState(
 			consumedResultId,
-			partitionId)
-			.thenAccept(responseHandle -> {
+			partitionId,
+			((PartitionProducerStateProvider.ResponseHandle responseHandle) -> {
 				boolean isProducingState = new RemoteChannelStateChecker(partitionId, owningTaskName)
 					.isProducerReadyOrAbortConsumption(responseHandle);
 				if (isProducingState) {
@@ -612,7 +609,7 @@ public class SingleInputGate extends InputGate {
 						responseHandle.failConsumption(t);
 					}
 				}
-			});
+			}));
 	}
 
 	private void queueChannel(InputChannel channel) {
@@ -631,8 +628,7 @@ public class SingleInputGate extends InputGate {
 
 			if (availableChannels == 0) {
 				inputChannelsWithData.notifyAll();
-				toNotify = isAvailable;
-				isAvailable = AVAILABLE;
+				toNotify = availabilityHelper.getUnavailableToResetAvailable();
 			}
 		}
 
@@ -652,7 +648,7 @@ public class SingleInputGate extends InputGate {
 					inputChannelsWithData.wait();
 				}
 				else {
-					resetIsAvailable();
+					availabilityHelper.resetUnavailable();
 					return Optional.empty();
 				}
 			}

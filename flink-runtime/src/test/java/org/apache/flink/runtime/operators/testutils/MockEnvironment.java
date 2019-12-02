@@ -40,6 +40,7 @@ import org.apache.flink.runtime.io.network.util.TestPooledBufferProvider;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.jobgraph.tasks.InputSplitProvider;
 import org.apache.flink.runtime.memory.MemoryManager;
+import org.apache.flink.runtime.memory.MemoryManagerBuilder;
 import org.apache.flink.runtime.metrics.groups.TaskMetricGroup;
 import org.apache.flink.runtime.query.KvStateRegistry;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
@@ -66,9 +67,9 @@ import static org.junit.Assert.fail;
  * IMPORTANT! Remember to close environment after usage!
  */
 public class MockEnvironment implements Environment, AutoCloseable {
-	
+
 	private final TaskInfo taskInfo;
-	
+
 	private final ExecutionConfig executionConfig;
 
 	private final MemoryManager memManager;
@@ -107,9 +108,9 @@ public class MockEnvironment implements Environment, AutoCloseable {
 
 	private final TaskEventDispatcher taskEventDispatcher = new TaskEventDispatcher();
 
-	private Optional<Class<Throwable>> expectedExternalFailureCause = Optional.empty();
+	private Optional<Class<? extends Throwable>> expectedExternalFailureCause = Optional.empty();
 
-	private Optional<Throwable> actualExternalFailureCause = Optional.empty();
+	private Optional<? extends Throwable> actualExternalFailureCause = Optional.empty();
 
 	private final TaskMetricGroup taskMetricGroup;
 
@@ -144,7 +145,7 @@ public class MockEnvironment implements Environment, AutoCloseable {
 		this.inputs = new LinkedList<InputGate>();
 		this.outputs = new LinkedList<ResultPartitionWriter>();
 
-		this.memManager = new MemoryManager(memorySize, 1);
+		this.memManager = MemoryManagerBuilder.newBuilder().setMemorySize(memorySize).build();
 		this.ioManager = new IOManagerAsync();
 		this.taskManagerRuntimeInfo = taskManagerRuntimeInfo;
 
@@ -163,7 +164,6 @@ public class MockEnvironment implements Environment, AutoCloseable {
 
 		this.taskMetricGroup = taskMetricGroup;
 	}
-
 
 	public IteratorWrappingTestSingleInputGate<Record> addInput(MutableObjectIterator<Record> inputIterator) {
 		try {
@@ -186,6 +186,10 @@ public class MockEnvironment implements Environment, AutoCloseable {
 			t.printStackTrace();
 			fail(t.getMessage());
 		}
+	}
+
+	public void addOutputs(List<ResultPartitionWriter> writers) {
+		outputs.addAll(writers);
 	}
 
 	@Override
@@ -346,11 +350,11 @@ public class MockEnvironment implements Environment, AutoCloseable {
 		ioManager.close();
 	}
 
-	public void setExpectedExternalFailureCause(Class<Throwable> expectedThrowableClass) {
+	public void setExpectedExternalFailureCause(Class<? extends Throwable> expectedThrowableClass) {
 		this.expectedExternalFailureCause = Optional.of(expectedThrowableClass);
 	}
 
-	public Optional<Throwable> getActualExternalFailureCause() {
+	public Optional<? extends Throwable> getActualExternalFailureCause() {
 		return actualExternalFailureCause;
 	}
 }
