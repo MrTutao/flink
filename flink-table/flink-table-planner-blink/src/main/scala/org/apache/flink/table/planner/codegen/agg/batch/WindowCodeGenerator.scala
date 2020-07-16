@@ -19,14 +19,15 @@
 package org.apache.flink.table.planner.codegen.agg.batch
 
 import org.apache.flink.table.api.DataTypes
-import org.apache.flink.table.dataformat.{BaseRow, BinaryRow, GenericRow, JoinedRow}
+import org.apache.flink.table.data.binary.BinaryRowData
+import org.apache.flink.table.data.{GenericRowData, JoinedRowData, RowData}
 import org.apache.flink.table.expressions.ExpressionUtils.extractValue
 import org.apache.flink.table.expressions.{Expression, ValueLiteralExpression}
 import org.apache.flink.table.functions.{AggregateFunction, UserDefinedFunction}
 import org.apache.flink.table.planner.JLong
 import org.apache.flink.table.planner.calcite.FlinkRelBuilder.PlannerNamedWindowProperty
 import org.apache.flink.table.planner.calcite.FlinkTypeFactory
-import org.apache.flink.table.planner.codegen.CodeGenUtils.{BINARY_ROW, boxedTypeTermForType, newName}
+import org.apache.flink.table.planner.codegen.CodeGenUtils.{BINARY_ROW, TIMESTAMP_DATA, boxedTypeTermForType, newName}
 import org.apache.flink.table.planner.codegen.GenerateUtils.generateFieldAccess
 import org.apache.flink.table.planner.codegen.GeneratedExpression.{NEVER_NULL, NO_CODE}
 import org.apache.flink.table.planner.codegen.OperatorCodeGenerator.generateCollect
@@ -116,8 +117,13 @@ abstract class WindowCodeGenerator(
     (groupKeyRowType.getChildren :+ timestampInternalType).toArray,
     (groupKeyRowType.getFieldNames :+ "assignedTs$").toArray)
 
-  def getOutputRowClass: Class[_ <: BaseRow] =
-    if (namedProperties.isEmpty && grouping.isEmpty) classOf[GenericRow] else classOf[JoinedRow]
+  def getOutputRowClass: Class[_ <: RowData] = {
+    if (namedProperties.isEmpty && grouping.isEmpty) {
+      classOf[GenericRowData]
+    } else {
+      classOf[JoinedRowData]
+    }
+  }
 
   private[flink] def getWindowsGroupingElementInfo(
       enablePreAccumulate: Boolean = true): RowType = {
@@ -164,7 +170,7 @@ abstract class WindowCodeGenerator(
       initAggBufferCode: String,
       doAggregateCode: String,
       outputWinAggResExpr: GeneratedExpression): String = {
-    val rowIter = classOf[RowIterator[BinaryRow]].getName
+    val rowIter = classOf[RowIterator[BinaryRowData]].getName
     val statements =
       s"""
          |while ($groupingTerm.hasTriggerWindow()) {
@@ -286,7 +292,7 @@ abstract class WindowCodeGenerator(
         GeneratedExpression(s"$wStartCode", NEVER_NULL, NO_CODE, timestampInternalType) +:
             aggBufferExprs,
         valueRowType,
-        classOf[GenericRow],
+        classOf[GenericRowData],
         outRow = valueRow)
     }
 
@@ -296,7 +302,7 @@ abstract class WindowCodeGenerator(
       case Some(key) =>
         // generate agg result
         val windowAggResultTerm = CodeGenUtils.newName("windowAggResult")
-        ctx.addReusableOutputRecord(outputType, classOf[JoinedRow], windowAggResultTerm)
+        ctx.addReusableOutputRecord(outputType, classOf[JoinedRowData], windowAggResultTerm)
         val output =
           s"""
              |${setValueResult.code}
@@ -424,7 +430,7 @@ abstract class WindowCodeGenerator(
     val preAccResult = CodeGenUtils.newName("prepareWinElement")
     val preAccResultWriter = CodeGenUtils.newName("prepareWinElementWriter")
     ctx.addReusableOutputRecord(
-      windowElementType, classOf[BinaryRow], preAccResult, Some(preAccResultWriter))
+      windowElementType, classOf[BinaryRowData], preAccResult, Some(preAccResultWriter))
 
     val timeWindowType = classOf[TimeWindow].getName
     val currentWindow = newName("currentWindow")
@@ -481,7 +487,7 @@ abstract class WindowCodeGenerator(
         val setPanedAggResultExpr = exprCodegen.generateResultExpression(
           setResultExprs,
           windowElementType,
-          classOf[BinaryRow],
+          classOf[BinaryRowData],
           preAccResult,
           Some(preAccResultWriter))
 
@@ -621,9 +627,9 @@ abstract class WindowCodeGenerator(
 
       // reusable row to set window property fields
       val propTerm = CodeGenUtils.newName("windowProp")
-      ctx.addReusableOutputRecord(propOutputType, classOf[GenericRow], propTerm)
+      ctx.addReusableOutputRecord(propOutputType, classOf[GenericRowData], propTerm)
       val windowAggResultWithPropTerm = CodeGenUtils.newName("windowAggResultWithProperty")
-      ctx.addReusableOutputRecord(outputType, classOf[JoinedRow], windowAggResultWithPropTerm)
+      ctx.addReusableOutputRecord(outputType, classOf[JoinedRowData], windowAggResultWithPropTerm)
 
       // set window start, end property according to window type
       val (startPos, endPos, rowTimePos) = AggregateUtil.computeWindowPropertyPos(namedProperties)
@@ -632,17 +638,17 @@ abstract class WindowCodeGenerator(
       // get assigned window start timestamp
       def windowProps(size: Expression) = {
         val (startWValue, endWValue, rowTimeValue) = (
-            s"$currentWindowTerm.getStart()",
-            s"$currentWindowTerm.getEnd()",
-            s"$currentWindowTerm.maxTimestamp()")
+            s"$TIMESTAMP_DATA.fromEpochMillis($currentWindowTerm.getStart())",
+            s"$TIMESTAMP_DATA.fromEpochMillis($currentWindowTerm.getEnd())",
+            s"$TIMESTAMP_DATA.fromEpochMillis($currentWindowTerm.maxTimestamp())")
         val start = if (startPos.isDefined) {
-          s"$propTerm.setLong($lastPos + ${startPos.get}, $startWValue);"
+          s"$propTerm.setField($lastPos + ${startPos.get}, $startWValue);"
         } else ""
         val end = if (endPos.isDefined) {
-          s"$propTerm.setLong($lastPos + ${endPos.get}, $endWValue);"
+          s"$propTerm.setField($lastPos + ${endPos.get}, $endWValue);"
         } else ""
         val rowTime = if (rowTimePos.isDefined) {
-          s"$propTerm.setLong($lastPos + ${rowTimePos.get}, $rowTimeValue);"
+          s"$propTerm.setField($lastPos + ${rowTimePos.get}, $rowTimeValue);"
         } else ""
         (start, end, rowTime)
       }

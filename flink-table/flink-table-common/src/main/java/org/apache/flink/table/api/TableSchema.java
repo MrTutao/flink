@@ -21,12 +21,17 @@ package org.apache.flink.table.api;
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.CompositeType;
+import org.apache.flink.table.api.constraints.UniqueConstraint;
 import org.apache.flink.table.types.DataType;
-import org.apache.flink.table.types.FieldsDataType;
+import org.apache.flink.table.types.logical.LegacyTypeInformationType;
 import org.apache.flink.table.types.logical.LogicalType;
+import org.apache.flink.table.types.logical.utils.LogicalTypeChecks;
 import org.apache.flink.table.types.utils.TypeConversions;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.Preconditions;
+import org.apache.flink.util.StringUtils;
+
+import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -36,6 +41,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -43,6 +50,7 @@ import static org.apache.flink.table.api.DataTypes.FIELD;
 import static org.apache.flink.table.api.DataTypes.Field;
 import static org.apache.flink.table.api.DataTypes.ROW;
 import static org.apache.flink.table.types.logical.LogicalTypeRoot.TIMESTAMP_WITHOUT_TIME_ZONE;
+import static org.apache.flink.table.types.logical.utils.LogicalTypeChecks.isCompositeType;
 import static org.apache.flink.table.types.utils.TypeConversions.fromDataTypeToLegacyInfo;
 import static org.apache.flink.table.types.utils.TypeConversions.fromLegacyInfoToDataType;
 
@@ -57,10 +65,15 @@ public class TableSchema {
 	private final List<TableColumn> columns;
 
 	private final List<WatermarkSpec> watermarkSpecs;
+	private final @Nullable UniqueConstraint primaryKey;
 
-	private TableSchema(List<TableColumn> columns, List<WatermarkSpec> watermarkSpecs) {
+	private TableSchema(
+			List<TableColumn> columns,
+			List<WatermarkSpec> watermarkSpecs,
+			@Nullable UniqueConstraint primaryKey) {
 		this.columns = Preconditions.checkNotNull(columns);
 		this.watermarkSpecs = Preconditions.checkNotNull(watermarkSpecs);
+		this.primaryKey = primaryKey;
 	}
 
 	/**
@@ -77,13 +90,14 @@ public class TableSchema {
 		validateColumnsAndWatermarkSpecs(columns, Collections.emptyList());
 		this.columns = columns;
 		this.watermarkSpecs = Collections.emptyList();
+		this.primaryKey = null;
 	}
 
 	/**
 	 * Returns a deep copy of the table schema.
 	 */
 	public TableSchema copy() {
-		return new TableSchema(new ArrayList<>(columns), new ArrayList<>(watermarkSpecs));
+		return new TableSchema(new ArrayList<>(columns), new ArrayList<>(watermarkSpecs), primaryKey);
 	}
 
 	/**
@@ -215,15 +229,34 @@ public class TableSchema {
 	}
 
 	/**
-	 * Converts a table schema into a (nested) data type describing a
-	 * {@link DataTypes#ROW(Field...)}.
+	 * Converts all columns of this schema into a (possibly nested) row data type.
 	 *
-	 * <p>Note that the returned row type contains field types for all the columns, including
-	 * normal columns and computed columns. Be caution with the computed column data types, because
-	 * they are not expected to be included in the row type of TableSource or TableSink.
+	 * <p>Note: The returned row data type contains both physical and computed columns. Be careful when
+	 * using this method in a table source or table sink. In many cases, {@link #toPhysicalRowDataType()}
+	 * might be more appropriate.
+	 *
+	 * @see DataTypes#ROW(Field...)
+	 * @see #toPhysicalRowDataType()
 	 */
 	public DataType toRowDataType() {
 		final Field[] fields = columns.stream()
+			.map(column -> FIELD(column.getName(), column.getType()))
+			.toArray(Field[]::new);
+		return ROW(fields);
+	}
+
+	/**
+	 * Converts all physical columns of this schema into a (possibly nested) row data type.
+	 *
+	 * <p>Note: The returned row data type contains only physical columns. It does not include computed
+	 * columns.
+	 *
+	 * @see DataTypes#ROW(Field...)
+	 * @see #toRowDataType()
+	 */
+	public DataType toPhysicalRowDataType() {
+		final Field[] fields = columns.stream()
+			.filter(column -> !column.isGenerated())
 			.map(column -> FIELD(column.getName(), column.getType()))
 			.toArray(Field[]::new);
 		return ROW(fields);
@@ -249,6 +282,10 @@ public class TableSchema {
 		return watermarkSpecs;
 	}
 
+	public Optional<UniqueConstraint> getPrimaryKey() {
+		return Optional.ofNullable(primaryKey);
+	}
+
 	@Override
 	public String toString() {
 		final StringBuilder sb = new StringBuilder();
@@ -267,8 +304,14 @@ public class TableSchema {
 			for (WatermarkSpec watermark : watermarkSpecs) {
 				sb.append(" |-- ").append("WATERMARK FOR ")
 					.append(watermark.getRowtimeAttribute()).append(" AS ")
-					.append(watermark.getWatermarkExpressionString());
+					.append(watermark.getWatermarkExpr());
+				sb.append('\n');
 			}
+		}
+
+		if (primaryKey != null) {
+			sb.append(" |-- ").append(primaryKey.asSummaryString());
+			sb.append('\n');
 		}
 		return sb.toString();
 	}
@@ -281,16 +324,15 @@ public class TableSchema {
 		if (o == null || getClass() != o.getClass()) {
 			return false;
 		}
-		TableSchema schema = (TableSchema) o;
-		return Objects.equals(columns, schema.columns)
-			&& Objects.equals(watermarkSpecs, schema.getWatermarkSpecs());
+		TableSchema that = (TableSchema) o;
+		return Objects.equals(columns, that.columns) &&
+			Objects.equals(watermarkSpecs, that.watermarkSpecs) &&
+			Objects.equals(primaryKey, that.primaryKey);
 	}
 
 	@Override
 	public int hashCode() {
-		int result = Objects.hash(columns);
-		result = 31 * result + watermarkSpecs.hashCode();
-		return result;
+		return Objects.hash(columns, watermarkSpecs, primaryKey);
 	}
 
 	/**
@@ -348,28 +390,30 @@ public class TableSchema {
 	}
 
 	/** Table column and watermark specification sanity check. */
-	private static void validateColumnsAndWatermarkSpecs(List<TableColumn> columns,
+	private static void validateColumnsAndWatermarkSpecs(
+			List<TableColumn> columns,
 			List<WatermarkSpec> watermarkSpecs) {
 		// Validate and create name to type mapping.
 		// Field name to data type mapping, we need this because the row time attribute
 		// field can be nested.
 
 		// This also check duplicate fields.
-		final Map<String, DataType> fieldNameToType = new HashMap<>();
+		final Map<String, LogicalType> fieldNameToType = new HashMap<>();
 		for (TableColumn column : columns) {
-			validateAndCreateNameToTypeMapping(fieldNameToType,
+			validateAndCreateNameToTypeMapping(
+				fieldNameToType,
 				column.getName(),
-				column.getType(),
+				column.getType().getLogicalType(),
 				"");
 		}
 
 		// Validate watermark and rowtime attribute.
 		for (WatermarkSpec watermark : watermarkSpecs) {
 			String rowtimeAttribute = watermark.getRowtimeAttribute();
-			DataType rowtimeType = Optional.ofNullable(fieldNameToType.get(rowtimeAttribute))
+			LogicalType rowtimeType = Optional.ofNullable(fieldNameToType.get(rowtimeAttribute))
 				.orElseThrow(() -> new ValidationException(String.format(
 					"Rowtime attribute '%s' is not defined in schema.", rowtimeAttribute)));
-			if (rowtimeType.getLogicalType().getTypeRoot() != TIMESTAMP_WITHOUT_TIME_ZONE) {
+			if (rowtimeType.getTypeRoot() != TIMESTAMP_WITHOUT_TIME_ZONE) {
 				throw new ValidationException(String.format(
 					"Rowtime attribute '%s' must be of type TIMESTAMP but is of type '%s'.",
 					rowtimeAttribute, rowtimeType));
@@ -377,9 +421,38 @@ public class TableSchema {
 			LogicalType watermarkOutputType = watermark.getWatermarkExprOutputType().getLogicalType();
 			if (watermarkOutputType.getTypeRoot() != TIMESTAMP_WITHOUT_TIME_ZONE) {
 				throw new ValidationException(String.format(
-					"Watermark strategy '%s' must be of type TIMESTAMP but is of type '%s'.",
-					watermark.getWatermarkExpressionString(),
-					watermarkOutputType.asSerializableString()));
+					"Watermark strategy %s must be of type TIMESTAMP but is of type '%s'.",
+					watermark.getWatermarkExpr(),
+					watermarkOutputType.asSummaryString()));
+			}
+		}
+	}
+
+	private static void validatePrimaryKey(List<TableColumn> columns, UniqueConstraint primaryKey) {
+		Map<String, TableColumn> columnsByNameLookup = columns.stream()
+			.collect(Collectors.toMap(TableColumn::getName, Function.identity()));
+
+		for (String columnName : primaryKey.getColumns()) {
+			TableColumn column = columnsByNameLookup.get(columnName);
+			if (column == null) {
+				throw new ValidationException(String.format(
+					"Could not create a PRIMARY KEY '%s'. Column '%s' does not exist.",
+					primaryKey.getName(),
+					columnName));
+			}
+
+			if (column.isGenerated()) {
+				throw new ValidationException(String.format(
+					"Could not create a PRIMARY KEY '%s' with a generated column '%s'.",
+					primaryKey.getName(),
+					columnName));
+			}
+
+			if (column.getType().getLogicalType().isNullable()) {
+				throw new ValidationException(String.format(
+					"Could not create a PRIMARY KEY '%s'. Column '%s' is nullable.",
+					primaryKey.getName(),
+					columnName));
 			}
 		}
 	}
@@ -404,19 +477,25 @@ public class TableSchema {
 	 * @param parentFieldName Field name of parent type, e.g. "f0" in the above example
 	 */
 	private static void validateAndCreateNameToTypeMapping(
-			Map<String, DataType> fieldNameToType,
+			Map<String, LogicalType> fieldNameToType,
 			String fieldName,
-			DataType fieldType,
+			LogicalType fieldType,
 			String parentFieldName) {
 		String fullFieldName = parentFieldName.isEmpty() ? fieldName : parentFieldName + "." + fieldName;
-		DataType oldType = fieldNameToType.put(fullFieldName, fieldType);
+		LogicalType oldType = fieldNameToType.put(fullFieldName, fieldType);
 		if (oldType != null) {
 			throw new ValidationException("Field names must be unique. Duplicate field: '" + fullFieldName + "'");
 		}
-		if (fieldType instanceof FieldsDataType) {
-			Map<String, DataType> fieldDataTypes = ((FieldsDataType) fieldType).getFieldDataTypes();
-			fieldDataTypes.forEach((key, value) ->
-				validateAndCreateNameToTypeMapping(fieldNameToType, key, value, fullFieldName));
+		if (isCompositeType(fieldType) && !(fieldType instanceof LegacyTypeInformationType)) {
+			final List<String> fieldNames = LogicalTypeChecks.getFieldNames(fieldType);
+			final List<LogicalType> fieldTypes = fieldType.getChildren();
+			IntStream.range(0, fieldNames.size())
+				.forEach(i ->
+					validateAndCreateNameToTypeMapping(
+						fieldNameToType,
+						fieldNames.get(i),
+						fieldTypes.get(i),
+						fullFieldName));
 		}
 	}
 
@@ -430,6 +509,8 @@ public class TableSchema {
 		private List<TableColumn> columns;
 
 		private final List<WatermarkSpec> watermarkSpecs;
+
+		private UniqueConstraint primaryKey;
 
 		public Builder() {
 			columns = new ArrayList<>();
@@ -481,6 +562,16 @@ public class TableSchema {
 		}
 
 		/**
+		 * Adds a {@link TableColumn} to this builder.
+		 *
+		 * <p>The call order of this method determines the order of fields in the schema.
+		 */
+		public Builder add(TableColumn column) {
+			columns.add(column);
+			return this;
+		}
+
+		/**
 		 * Add an array of fields with names and data types.
 		 *
 		 * <p>The call order of this method determines the order of fields in the schema.
@@ -519,14 +610,66 @@ public class TableSchema {
 		 *                                Whether the data type equals to the output type of expression will also
 		 *                                not be validated by {@link TableSchema}.
 		 */
-		public Builder watermark(String rowtimeAttribute, String watermarkExpressionString, DataType watermarkExprOutputType) {
+		public Builder watermark(
+				String rowtimeAttribute,
+				String watermarkExpressionString,
+				DataType watermarkExprOutputType) {
 			Preconditions.checkNotNull(rowtimeAttribute);
 			Preconditions.checkNotNull(watermarkExpressionString);
 			Preconditions.checkNotNull(watermarkExprOutputType);
 			if (!this.watermarkSpecs.isEmpty()) {
 				throw new IllegalStateException("Multiple watermark definition is not supported yet.");
 			}
-			this.watermarkSpecs.add(new WatermarkSpec(rowtimeAttribute, watermarkExpressionString, watermarkExprOutputType));
+			this.watermarkSpecs.add(new WatermarkSpec(
+				rowtimeAttribute,
+				watermarkExpressionString,
+				watermarkExprOutputType));
+			return this;
+		}
+
+		/**
+		 * Adds the given {@link WatermarkSpec} to this builder.
+		 */
+		public Builder watermark(WatermarkSpec watermarkSpec) {
+			if (!this.watermarkSpecs.isEmpty()) {
+				throw new IllegalStateException("Multiple watermark definition is not supported yet.");
+			}
+			this.watermarkSpecs.add(watermarkSpec);
+			return this;
+		}
+
+		/**
+		 * Creates a primary key constraint for a set of given columns. The primary key is informational only.
+		 * It will not be enforced. It can be used for optimizations. It is the owner's of the data responsibility
+		 * to ensure uniqueness of the data.
+		 *
+		 * <p>The primary key will be assigned a random name.
+		 *
+		 * @param columns array of columns that form a unique primary key
+		 */
+		public Builder primaryKey(String... columns) {
+			return primaryKey(UUID.randomUUID().toString(), columns);
+		}
+
+		/**
+		 * Creates a primary key constraint for a set of given columns. The primary key is informational only.
+		 * It will not be enforced. It can be used for optimizations. It is the owner's of the data responsibility
+		 * to ensure
+		 *
+		 * @param columns array of columns that form a unique primary key
+		 * @param name name for the primary key, can be used to reference the constraint
+		 */
+		public Builder primaryKey(String name, String[] columns) {
+			if (this.primaryKey != null) {
+				throw new ValidationException("Can not create multiple PRIMARY keys.");
+			}
+			if (StringUtils.isNullOrWhitespaceOnly(name)) {
+				throw new ValidationException("PRIMARY KEY's name can not be null or empty.");
+			}
+			if (columns == null || columns.length == 0) {
+				throw new ValidationException("PRIMARY KEY constraint must be defined for at least a single column.");
+			}
+			this.primaryKey = UniqueConstraint.primaryKey(name, Arrays.asList(columns));
 			return this;
 		}
 
@@ -535,7 +678,12 @@ public class TableSchema {
 		 */
 		public TableSchema build() {
 			validateColumnsAndWatermarkSpecs(this.columns, this.watermarkSpecs);
-			return new TableSchema(columns, watermarkSpecs);
+
+			if (primaryKey != null) {
+				validatePrimaryKey(this.columns, primaryKey);
+			}
+
+			return new TableSchema(columns, watermarkSpecs, primaryKey);
 		}
 	}
 }

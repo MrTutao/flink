@@ -20,10 +20,10 @@ package org.apache.flink.client.program;
 
 import org.apache.flink.api.common.ProgramDescription;
 import org.apache.flink.client.ClientUtils;
-import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.jobgraph.SavepointRestoreSettings;
 import org.apache.flink.util.InstantiationUtil;
+import org.apache.flink.util.JarUtils;
 
 import javax.annotation.Nullable;
 
@@ -39,12 +39,6 @@ import java.lang.reflect.Modifier;
 import java.net.MalformedURLException;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.nio.file.FileSystems;
-import java.nio.file.FileVisitResult;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -240,33 +234,7 @@ public class PackagedProgram {
 		}
 
 		if (isPython) {
-			String flinkOptPath = System.getenv(ConfigConstants.ENV_FLINK_OPT_DIR);
-			final List<Path> pythonJarPath = new ArrayList<>();
-			try {
-				Files.walkFileTree(FileSystems.getDefault().getPath(flinkOptPath), new SimpleFileVisitor<Path>() {
-					@Override
-					public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-						FileVisitResult result = super.visitFile(file, attrs);
-						if (file.getFileName().toString().startsWith("flink-python")) {
-							pythonJarPath.add(file);
-						}
-						return result;
-					}
-				});
-			} catch (IOException e) {
-				throw new RuntimeException(
-					"Exception encountered during finding the flink-python jar. This should not happen.", e);
-			}
-
-			if (pythonJarPath.size() != 1) {
-				throw new RuntimeException("Found " + pythonJarPath.size() + " flink-python jar.");
-			}
-
-			try {
-				libs.add(pythonJarPath.get(0).toUri().toURL());
-			} catch (MalformedURLException e) {
-				throw new RuntimeException("URL is invalid. This should not happen.", e);
-			}
+			libs.add(PackagedProgramUtils.getPythonJar());
 		}
 
 		return libs;
@@ -525,7 +493,7 @@ public class PackagedProgram {
 
 	private static void checkJarFile(URL jarfile) throws ProgramInvocationException {
 		try {
-			ClientUtils.checkJarFile(jarfile);
+			JarUtils.checkJarFile(jarfile);
 		} catch (IOException e) {
 			throw new ProgramInvocationException(e.getMessage(), e);
 		} catch (Throwable t) {

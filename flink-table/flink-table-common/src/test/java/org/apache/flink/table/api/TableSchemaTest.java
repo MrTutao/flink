@@ -20,19 +20,22 @@ package org.apache.flink.table.api;
 
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple3;
+import org.apache.flink.table.api.constraints.UniqueConstraint;
 import org.apache.flink.table.types.DataType;
-import org.apache.flink.table.types.FieldsDataType;
 
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
+import static org.hamcrest.CoreMatchers.equalTo;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -64,7 +67,7 @@ public class TableSchemaTest {
 			" |-- f1: ROW<`q1` STRING, `q2` TIMESTAMP(3)>\n" +
 			" |-- f2: STRING\n" +
 			" |-- f3: BIGINT AS f0 + 1\n" +
-			" |-- WATERMARK FOR f1.q2 AS now()";
+			" |-- WATERMARK FOR f1.q2 AS now()\n";
 		assertEquals(expected, schema.toString());
 
 		// test getFieldNames and getFieldDataType
@@ -74,7 +77,7 @@ public class TableSchemaTest {
 			schema.getTableColumn(3));
 		assertEquals(Optional.of(DataTypes.STRING()), schema.getFieldDataType("f2"));
 		assertEquals(Optional.of(DataTypes.STRING()), schema.getFieldDataType("f1")
-			.map(r -> ((FieldsDataType) r).getFieldDataTypes().get("q1")));
+			.map(r -> r.getChildren().get(0)));
 		assertFalse(schema.getFieldName(4).isPresent());
 		assertFalse(schema.getFieldType(-1).isPresent());
 		assertFalse(schema.getFieldType("c").isPresent());
@@ -167,7 +170,7 @@ public class TableSchemaTest {
 	public void testDifferentWatermarkStrategyOutputTypes() {
 		List<Tuple2<DataType, String>> testData = new ArrayList<>();
 		testData.add(Tuple2.of(DataTypes.BIGINT(), "but is of type 'BIGINT'"));
-		testData.add(Tuple2.of(DataTypes.STRING(), "but is of type 'VARCHAR(2147483647)'"));
+		testData.add(Tuple2.of(DataTypes.STRING(), "but is of type 'STRING'"));
 		testData.add(Tuple2.of(DataTypes.INT(), "but is of type 'INT'"));
 		testData.add(Tuple2.of(DataTypes.TIMESTAMP(), "PASS"));
 		testData.add(Tuple2.of(DataTypes.TIMESTAMP(0), "PASS"));
@@ -192,4 +195,134 @@ public class TableSchemaTest {
 		});
 	}
 
+	/*
+		CONSTRAINTS TESTS
+	 */
+	@Test
+	public void testPrimaryKeyPrinting() {
+		TableSchema schema = TableSchema.builder()
+			.field("f0", DataTypes.BIGINT().notNull())
+			.field("f1", DataTypes.STRING().notNull())
+			.field("f2", DataTypes.DOUBLE().notNull())
+			.primaryKey("pk", new String[]{"f0", "f2"})
+			.build();
+
+		assertThat(schema.toString(), equalTo(
+			"root\n" +
+				" |-- f0: BIGINT NOT NULL\n" +
+				" |-- f1: STRING NOT NULL\n" +
+				" |-- f2: DOUBLE NOT NULL\n" +
+				" |-- CONSTRAINT pk PRIMARY KEY (f0, f2)\n"
+		));
+	}
+
+	@Test
+	public void testPrimaryKeyColumnsIndices() {
+		TableSchema schema = TableSchema.builder()
+			.field("f0", DataTypes.BIGINT().notNull())
+			.field("f1", DataTypes.STRING().notNull())
+			.field("f2", DataTypes.DOUBLE().notNull())
+			.primaryKey("pk", new String[]{"f0", "f2"})
+			.build();
+
+		UniqueConstraint expectedKey = UniqueConstraint.primaryKey(
+			"pk",
+			Arrays.asList(
+				"f0",
+				"f2"
+			));
+
+		assertThat(
+			schema.getPrimaryKey().get(),
+			equalTo(expectedKey)
+		);
+	}
+
+	@Test
+	public void testPrimaryKeyLazilyDefinedColumns() {
+		TableSchema schema = TableSchema.builder()
+			.field("f0", DataTypes.BIGINT().notNull())
+			.primaryKey("pk", new String[]{"f0", "f2"})
+			.field("f1", DataTypes.STRING().notNull())
+			.field("f2", DataTypes.DOUBLE().notNull())
+			.build();
+
+		UniqueConstraint expectedKey = UniqueConstraint.primaryKey(
+			"pk",
+			Arrays.asList(
+				"f0",
+				"f2"
+			));
+
+		assertThat(
+			schema.getPrimaryKey().get(),
+			equalTo(expectedKey)
+		);
+	}
+
+	@Test
+	public void testPrimaryKeyNoColumn() {
+		thrown.expect(ValidationException.class);
+		thrown.expectMessage("Could not create a PRIMARY KEY 'pk'. Column 'f2' does not exist.");
+
+		TableSchema.builder()
+			.field("f0", DataTypes.BIGINT().notNull())
+			.primaryKey("pk", new String[]{"f0", "f2"})
+			.build();
+	}
+
+	@Test
+	public void testPrimaryKeyNullableColumn() {
+		thrown.expect(ValidationException.class);
+		thrown.expectMessage("Could not create a PRIMARY KEY 'pk'. Column 'f0' is nullable.");
+
+		TableSchema.builder()
+			.field("f0", DataTypes.BIGINT())
+			.primaryKey("pk", new String[]{"f0"})
+			.build();
+	}
+
+	@Test
+	public void testPrimaryKeyGeneratedColumn() {
+		thrown.expect(ValidationException.class);
+		thrown.expectMessage("Could not create a PRIMARY KEY 'pk' with a generated column 'f0'.");
+
+		TableSchema.builder()
+			.field("f0", DataTypes.BIGINT().notNull(), "123")
+			.primaryKey("pk", new String[]{"f0", "f2"})
+			.build();
+	}
+
+	@Test
+	public void testPrimaryKeyNameMustNotBeNull() {
+		thrown.expect(ValidationException.class);
+		thrown.expectMessage("PRIMARY KEY's name can not be null or empty.");
+
+		TableSchema.builder()
+			.field("f0", DataTypes.BIGINT())
+			.primaryKey(null, new String[]{"f0", "f2"})
+			.build();
+	}
+
+	@Test
+	public void testPrimaryKeyNameMustNotBeEmpty() {
+		thrown.expect(ValidationException.class);
+		thrown.expectMessage("PRIMARY KEY's name can not be null or empty.");
+
+		TableSchema.builder()
+			.field("f0", DataTypes.BIGINT())
+			.primaryKey("", new String[]{"f0", "f2"})
+			.build();
+	}
+
+	@Test
+	public void testPrimaryKeyNoColumns() {
+		thrown.expect(ValidationException.class);
+		thrown.expectMessage("PRIMARY KEY constraint must be defined for at least a single column.");
+
+		TableSchema.builder()
+			.field("f0", DataTypes.BIGINT())
+			.primaryKey("pk", new String[]{})
+			.build();
+	}
 }
