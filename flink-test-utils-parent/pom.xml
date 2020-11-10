@@ -31,13 +31,14 @@ under the License.
 	</parent>
 
 	<artifactId>flink-test-utils-parent</artifactId>
-	<name>flink-test-utils-parent</name>
+	<name>Flink : Test utils : </name>
 
 	<packaging>pom</packaging>
 
 	<modules>
 		<module>flink-test-utils-junit</module>
 		<module>flink-test-utils</module>
+		<module>flink-connector-test-utils</module>
 	</modules>
 
 </project>

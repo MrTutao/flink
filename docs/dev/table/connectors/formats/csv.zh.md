@@ -95,17 +95,10 @@ Format 参数
       <td>可选</td>
       <td style="word-wrap: break-word;"><code>,</code></td>
       <td>String</td>
-      <td>字段分隔符 (默认<code>','</code>)。</td>
-    </tr>
-    <tr>
-      <td><h5>csv.line-delimiter</h5></td>
-      <td>可选</td>
-      <td style="word-wrap: break-word;"><code>\n</code></td>
-      <td>String</td>
-      <td>行分隔符, 默认<code>\n</code>。注意 <code>\n</code> 和 <code>\r</code> 是不可见的特殊符号, 在显式的 SQL 语句中必须使用 unicode 编码。
+      <td>字段分隔符 (默认<code>','</code>)。注意 <code>\n</code> 和 <code>\r</code> 是不可见的特殊符号, 在显式的 SQL 语句中必须使用 unicode 编码。
           <ul>
-           <li>例如 <code>'csv.line-delimiter' = U&'\\000D'</code> 使用换行符号 <code>\r</code> 作为行分隔符。</li>
-           <li>例如 <code>'csv.line-delimiter' = U&'\\000A'</code> 使用换行符号 <code>\n</code> 作为行分隔符。</li>
+           <li>例如 <code>'csv.field-delimiter' = U&'\000D'</code> 使用回车符号 <code>\r</code> 作为字段分隔符。</li>
+           <li>例如 <code>'csv.field-delimiter' = U&'\000A'</code> 使用换行符号 <code>\n</code> 作为字段分隔符。</li>
           </ul>
       </td>
     </tr>
@@ -114,7 +107,7 @@ Format 参数
       <td>可选</td>
       <td style="word-wrap: break-word;">false</td>
       <td>Boolean</td>
-      <td>关闭对引用的值使用引号 (默认是 false).如果允许，选项 <code>'csv.quote-character'</code> 必须被设置。</td>
+      <td>是否禁止对引用的值使用引号 (默认是 false). 如果禁止，选项 <code>'csv.quote-character'</code> 不能设置。</td>
     </tr>
     <tr>
       <td><h5>csv.quote-character</h5></td>

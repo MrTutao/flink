@@ -22,7 +22,7 @@ import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.util.DataFormatConverters;
-import org.apache.flink.table.runtime.typeutils.WrapperTypeInfo;
+import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.types.Row;
@@ -200,38 +200,23 @@ public class CsvRowDataSerDeSchemaTest {
 			FIELD("f2", STRING()));
 		RowType rowType = (RowType) dataType.getLogicalType();
 		CsvRowDataSerializationSchema.Builder serSchemaBuilder =
-			new CsvRowDataSerializationSchema.Builder(rowType).setLineDelimiter("\r");
+			new CsvRowDataSerializationSchema.Builder(rowType);
 
 		assertArrayEquals(
-			"Test,12,Hello\r".getBytes(),
+			"Test,12,Hello".getBytes(),
 			serialize(serSchemaBuilder, rowData("Test", 12, "Hello")));
 
 		serSchemaBuilder.setQuoteCharacter('#');
 
 		assertArrayEquals(
-			"Test,12,#2019-12-26 12:12:12#\r".getBytes(),
+			"Test,12,#2019-12-26 12:12:12#".getBytes(),
 			serialize(serSchemaBuilder, rowData("Test", 12, "2019-12-26 12:12:12")));
 
 		serSchemaBuilder.disableQuoteCharacter();
 
 		assertArrayEquals(
-			"Test,12,2019-12-26 12:12:12\r".getBytes(),
+			"Test,12,2019-12-26 12:12:12".getBytes(),
 			serialize(serSchemaBuilder, rowData("Test", 12, "2019-12-26 12:12:12")));
-	}
-
-	@Test
-	public void testEmptyLineDelimiter() throws Exception {
-		DataType dataType = ROW(
-			FIELD("f0", STRING()),
-			FIELD("f1", INT()),
-			FIELD("f2", STRING()));
-		RowType rowType = (RowType) dataType.getLogicalType();
-		CsvRowDataSerializationSchema.Builder serSchemaBuilder =
-			new CsvRowDataSerializationSchema.Builder(rowType).setLineDelimiter("");
-
-		assertArrayEquals(
-			"Test,12,Hello".getBytes(),
-			serialize(serSchemaBuilder, rowData("Test", 12, "Hello")));
 	}
 
 	@Test(expected = IllegalArgumentException.class)
@@ -248,6 +233,39 @@ public class CsvRowDataSerDeSchemaTest {
 			RAW(TypeExtractor.getForClass(java.util.Date.class)),
 			"FAIL",
 			new java.util.Date());
+	}
+
+	@Test
+	public void testSerializeDeserializeNestedTypes() throws Exception {
+		DataType subDataType0 = ROW(
+			FIELD("f0c0", STRING()),
+			FIELD("f0c1", INT()),
+			FIELD("f0c2", STRING()));
+		DataType subDataType1 = ROW(
+			FIELD("f1c0", STRING()),
+			FIELD("f1c1", INT()),
+			FIELD("f1c2", STRING()));
+		DataType dataType = ROW(
+			FIELD("f0", subDataType0),
+			FIELD("f1", subDataType1));
+		RowType rowType = (RowType) dataType.getLogicalType();
+
+		// serialization
+		CsvRowDataSerializationSchema.Builder serSchemaBuilder =
+			new CsvRowDataSerializationSchema.Builder(rowType);
+		// deserialization
+		CsvRowDataDeserializationSchema.Builder deserSchemaBuilder =
+			new CsvRowDataDeserializationSchema.Builder(rowType, InternalTypeInfo.of(rowType));
+
+		RowData normalRow = GenericRowData.of(
+			rowData("hello", 1, "This is 1st top column"),
+			rowData("world", 2, "This is 2nd top column"));
+		testSerDeConsistency(normalRow, serSchemaBuilder, deserSchemaBuilder);
+
+		RowData nullRow = GenericRowData.of(
+			null,
+			rowData("world", 2, "This is 2nd top column after null"));
+		testSerDeConsistency(nullRow, serSchemaBuilder, deserSchemaBuilder);
 	}
 
 	private void testNullableField(DataType fieldType, String string, Object value) throws Exception {
@@ -272,11 +290,11 @@ public class CsvRowDataSerDeSchemaTest {
 			FIELD("f1", fieldType),
 			FIELD("f2", STRING())
 		).getLogicalType();
-		String expectedCsv = "BEGIN" + fieldDelimiter + csvValue + fieldDelimiter + "END\n";
+		String expectedCsv = "BEGIN" + fieldDelimiter + csvValue + fieldDelimiter + "END";
 
 		// deserialization
 		CsvRowDataDeserializationSchema.Builder deserSchemaBuilder =
-			new CsvRowDataDeserializationSchema.Builder(rowType, WrapperTypeInfo.of(rowType));
+			new CsvRowDataDeserializationSchema.Builder(rowType, InternalTypeInfo.of(rowType));
 		deserializationConfig.accept(deserSchemaBuilder);
 		RowData deserializedRow = deserialize(deserSchemaBuilder, expectedCsv);
 
@@ -299,12 +317,12 @@ public class CsvRowDataSerDeSchemaTest {
 			FIELD("f1", fieldType),
 			FIELD("f2", STRING()));
 		RowType rowType = (RowType) dataType.getLogicalType();
-		String csv = "BEGIN" + fieldDelimiter + csvValue + fieldDelimiter + "END\n";
+		String csv = "BEGIN" + fieldDelimiter + csvValue + fieldDelimiter + "END";
 		Row expectedRow = Row.of("BEGIN", value, "END");
 
 		// deserialization
 		CsvRowDataDeserializationSchema.Builder deserSchemaBuilder =
-			new CsvRowDataDeserializationSchema.Builder(rowType, WrapperTypeInfo.of(rowType));
+			new CsvRowDataDeserializationSchema.Builder(rowType, InternalTypeInfo.of(rowType));
 		deserializationConfig.accept(deserSchemaBuilder);
 		RowData deserializedRow = deserialize(deserSchemaBuilder, csv);
 		Row actualRow = (Row) DataFormatConverters.getConverterForDataType(dataType)
@@ -323,12 +341,22 @@ public class CsvRowDataSerDeSchemaTest {
 			FIELD("f2", STRING()));
 		RowType rowType = (RowType) dataType.getLogicalType();
 		CsvRowDataDeserializationSchema.Builder deserSchemaBuilder =
-			new CsvRowDataDeserializationSchema.Builder(rowType, WrapperTypeInfo.of(rowType))
+			new CsvRowDataDeserializationSchema.Builder(rowType, InternalTypeInfo.of(rowType))
 				.setIgnoreParseErrors(allowParsingErrors)
 				.setAllowComments(allowComments);
 		RowData deserializedRow = deserialize(deserSchemaBuilder, string);
 		return (Row) DataFormatConverters.getConverterForDataType(dataType)
 			.toExternal(deserializedRow);
+	}
+
+	private void testSerDeConsistency(
+			RowData originalRow,
+			CsvRowDataSerializationSchema.Builder serSchemaBuilder,
+			CsvRowDataDeserializationSchema.Builder deserSchemaBuilder) throws Exception {
+		RowData deserializedRow = deserialize(
+			deserSchemaBuilder,
+			new String(serialize(serSchemaBuilder, originalRow)));
+		assertEquals(deserializedRow, originalRow);
 	}
 
 	private static byte[] serialize(CsvRowDataSerializationSchema.Builder serSchemaBuilder, RowData row) throws Exception {

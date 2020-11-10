@@ -93,17 +93,10 @@ Format Options
       <td>optional</td>
       <td style="word-wrap: break-word;"><code>,</code></td>
       <td>String</td>
-      <td>Field delimiter character (<code>','</code> by default).</td>
-    </tr>
-    <tr>
-      <td><h5>csv.line-delimiter</h5></td>
-      <td>optional</td>
-      <td style="word-wrap: break-word;"><code>\n</code></td>
-      <td>String</td>
-      <td>Line delimiter, <code>\n</code> by default. Note the <code>\n</code> and <code>\r</code> are invisible special characters, you have to use unicode to specify them in plain SQL.
+      <td>Field delimiter character (<code>','</code> by default). Note the <code>\n</code> and <code>\r</code> are invisible special characters, you have to use unicode to specify them in plain SQL.
           <ul>
-           <li>e.g. <code>'csv.line-delimiter' = U&'\\000D'</code> specifies the to use carriage return <code>\r</code> as line delimiter.</li>
-           <li>e.g. <code>'csv.line-delimiter' = U&'\\000A'</code> specifies the to use line feed <code>\n</code> as line delimiter.</li>
+           <li>e.g. <code>'csv.field-delimiter' = U&'\000D'</code> specifies the to use carriage return <code>\r</code> as field delimiter.</li>
+           <li>e.g. <code>'csv.field-delimiter' = U&'\000A'</code> specifies the to use line feed <code>\n</code> as field delimiter.</li>
           </ul>
       </td>
     </tr>
@@ -113,7 +106,7 @@ Format Options
       <td style="word-wrap: break-word;">false</td>
       <td>Boolean</td>
       <td>Disabled quote character for enclosing field values (false by default).
-      If true, option <code>'csv.quote-character'</code> must be set.</td>
+      If true, option <code>'csv.quote-character'</code> can not be set.</td>
     </tr>
     <tr>
       <td><h5>csv.quote-character</h5></td>

@@ -20,16 +20,16 @@ package org.apache.flink.table.runtime.operators.join.stream;
 
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.table.data.GenericRowData;
-import org.apache.flink.table.data.JoinedRowData;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.util.RowDataUtil;
+import org.apache.flink.table.data.utils.JoinedRowData;
 import org.apache.flink.table.runtime.generated.GeneratedJoinCondition;
 import org.apache.flink.table.runtime.operators.join.stream.state.JoinInputSideSpec;
 import org.apache.flink.table.runtime.operators.join.stream.state.JoinRecordStateView;
 import org.apache.flink.table.runtime.operators.join.stream.state.JoinRecordStateViews;
 import org.apache.flink.table.runtime.operators.join.stream.state.OuterJoinRecordStateView;
 import org.apache.flink.table.runtime.operators.join.stream.state.OuterJoinRecordStateViews;
-import org.apache.flink.table.runtime.typeutils.RowDataTypeInfo;
+import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.types.RowKind;
 
 /**
@@ -54,8 +54,8 @@ public class StreamingJoinOperator extends AbstractStreamingJoinOperator {
 	private transient JoinRecordStateView rightRecordStateView;
 
 	public StreamingJoinOperator(
-			RowDataTypeInfo leftType,
-			RowDataTypeInfo rightType,
+			InternalTypeInfo<RowData> leftType,
+			InternalTypeInfo<RowData> rightType,
 			GeneratedJoinCondition generatedJoinCondition,
 			JoinInputSideSpec leftInputSideSpec,
 			JoinInputSideSpec rightInputSideSpec,
@@ -73,8 +73,8 @@ public class StreamingJoinOperator extends AbstractStreamingJoinOperator {
 		super.open();
 
 		this.outRow = new JoinedRowData();
-		this.leftNullRow = new GenericRowData(leftType.getArity());
-		this.rightNullRow = new GenericRowData(rightType.getArity());
+		this.leftNullRow = new GenericRowData(leftType.toRowSize());
+		this.rightNullRow = new GenericRowData(rightType.toRowSize());
 
 		// initialize states
 		if (leftIsOuter) {

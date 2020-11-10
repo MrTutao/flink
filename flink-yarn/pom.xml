@@ -28,7 +28,7 @@ under the License.
 	</parent>
 
 	<artifactId>flink-yarn_${scala.binary.version}</artifactId>
-	<name>flink-yarn</name>
+	<name>Flink : Yarn</name>
 	<packaging>jar</packaging>
 
 	<properties>
@@ -224,6 +224,11 @@ under the License.
 						<goals>
 							<goal>test-jar</goal>
 						</goals>
+						<configuration>
+							<excludes>
+								<exclude>resource-types.xml</exclude>
+							</excludes>
+						</configuration>
 					</execution>
 				</executions>
 			</plugin>

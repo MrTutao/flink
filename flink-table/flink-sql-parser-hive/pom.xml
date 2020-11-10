@@ -28,7 +28,7 @@ under the License.
 	</parent>
 
 	<artifactId>flink-sql-parser-hive</artifactId>
-	<name>flink-sql-parser-hive</name>
+	<name>Flink : Table : SQL Parser Hive</name>
 
 	<packaging>jar</packaging>
 
@@ -77,6 +77,10 @@ under the License.
 				<exclusion>
 					<groupId>com.fasterxml.jackson.core</groupId>
 					<artifactId>jackson-annotations</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>com.google.uzaygezen</groupId>
+					<artifactId>uzaygezen-core</artifactId>
 				</exclusion>
 			</exclusions>
 			<scope>test</scope>

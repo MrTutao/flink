@@ -257,6 +257,8 @@ Set the configuration option `state.backend.rocksdb.timer-service.factory` to `h
 
 <span class="label label-info">Note</span> *The combination RocksDB state backend with heap-based timers currently does NOT support asynchronous snapshots for the timers state. Other state like keyed state is still snapshotted asynchronously.*
 
+<span class="label label-info">Note</span> *When using RocksDB state backend with heap-based timers, checkpointing and taking savepoints is expected to fail if there are operators in application that write to raw keyed state.*
+
 ### Enabling RocksDB Native Metrics
 
 You can optionally access RockDB's native metrics through Flink's metrics system, by enabling certain metrics selectively.
@@ -290,7 +292,7 @@ There are two ways to pass a RocksDBOptionsFactory to the RocksDB State Backend:
 
   - Configure options factory class name in the `flink-conf.yaml` via `state.backend.rocksdb.options-factory`.
   
-  - Set the options factory programmatically, e.g. `RocksDBStateBackend.setOptions(new MyOptionsFactory());`
+  - Set the options factory programmatically, e.g. `RocksDBStateBackend.setRocksDBOptions(new MyOptionsFactory());`
 
 <span class="label label-info">Note</span> Options factory which set programmatically would override the one configured via `flink-conf.yaml`,
 and options factory has a higher priority over the predefined options if ever configured or set.

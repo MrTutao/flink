@@ -20,16 +20,16 @@ package org.apache.flink.formats.json.debezium;
 
 import org.apache.flink.api.common.serialization.DeserializationSchema;
 import org.apache.flink.api.common.serialization.SerializationSchema;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.formats.json.JsonOptions;
 import org.apache.flink.formats.json.TimestampFormat;
+import org.apache.flink.table.api.ValidationException;
 import org.apache.flink.table.connector.ChangelogMode;
 import org.apache.flink.table.connector.format.DecodingFormat;
 import org.apache.flink.table.connector.format.EncodingFormat;
-import org.apache.flink.table.connector.source.DynamicTableSource;
+import org.apache.flink.table.connector.sink.DynamicTableSink;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.factories.DeserializationFormatFactory;
 import org.apache.flink.table.factories.DynamicTableFactory;
@@ -63,30 +63,38 @@ public class DebeziumJsonFormatFactory implements DeserializationFormatFactory, 
 
 	public static final ConfigOption<String> TIMESTAMP_FORMAT = JsonOptions.TIMESTAMP_FORMAT;
 
-	@SuppressWarnings("unchecked")
 	@Override
 	public DecodingFormat<DeserializationSchema<RowData>> createDecodingFormat(
 			DynamicTableFactory.Context context,
 			ReadableConfig formatOptions) {
-		FactoryUtil.validateFactoryOptions(this, formatOptions);
-		final boolean schemaInclude = formatOptions.get(SCHEMA_INCLUDE);
-		final boolean ignoreParseErrors = formatOptions.get(IGNORE_PARSE_ERRORS);
-		TimestampFormat timestampFormatOption = JsonOptions.getTimestampFormat(formatOptions);
 
-		return new DecodingFormat<DeserializationSchema<RowData>>() {
-			@Override
-			public DeserializationSchema<RowData> createRuntimeDecoder(
-					DynamicTableSource.Context context, DataType producedDataType) {
-				final RowType rowType = (RowType) producedDataType.getLogicalType();
-				final TypeInformation<RowData> rowDataTypeInfo =
-					(TypeInformation<RowData>) context.createTypeInformation(producedDataType);
-				return new DebeziumJsonDeserializationSchema(
-					rowType,
-					rowDataTypeInfo,
-					schemaInclude,
-					ignoreParseErrors,
-					timestampFormatOption);
-			}
+		FactoryUtil.validateFactoryOptions(this, formatOptions);
+
+		final boolean schemaInclude = formatOptions.get(SCHEMA_INCLUDE);
+
+		final boolean ignoreParseErrors = formatOptions.get(IGNORE_PARSE_ERRORS);
+
+		final TimestampFormat timestampFormat = JsonOptions.getTimestampFormat(formatOptions);
+
+		return new DebeziumJsonDecodingFormat(schemaInclude, ignoreParseErrors, timestampFormat);
+	}
+
+	@Override
+	public EncodingFormat<SerializationSchema<RowData>> createEncodingFormat(
+			DynamicTableFactory.Context context,
+			ReadableConfig formatOptions) {
+
+		FactoryUtil.validateFactoryOptions(this, formatOptions);
+		TimestampFormat timestampFormat = JsonOptions.getTimestampFormat(formatOptions);
+		if (formatOptions.get(SCHEMA_INCLUDE)) {
+			throw new ValidationException(String.format(
+				"Debezium JSON serialization doesn't support '%s.%s' option been set to true.",
+				IDENTIFIER,
+				SCHEMA_INCLUDE.key()
+			));
+		}
+
+		return new EncodingFormat<SerializationSchema<RowData>>() {
 
 			@Override
 			public ChangelogMode getChangelogMode() {
@@ -97,14 +105,13 @@ public class DebeziumJsonFormatFactory implements DeserializationFormatFactory, 
 					.addContainedKind(RowKind.DELETE)
 					.build();
 			}
-		};
-	}
 
-	@Override
-	public EncodingFormat<SerializationSchema<RowData>> createEncodingFormat(
-			DynamicTableFactory.Context context,
-			ReadableConfig formatOptions) {
-		throw new UnsupportedOperationException("Debezium format doesn't support as a sink format yet.");
+			@Override
+			public SerializationSchema<RowData> createRuntimeEncoder(DynamicTableSink.Context context, DataType consumedDataType) {
+				final RowType rowType = (RowType) consumedDataType.getLogicalType();
+				return new DebeziumJsonSerializationSchema(rowType, timestampFormat);
+			}
+		};
 	}
 
 	@Override
@@ -125,5 +132,4 @@ public class DebeziumJsonFormatFactory implements DeserializationFormatFactory, 
 		options.add(TIMESTAMP_FORMAT);
 		return options;
 	}
-
 }

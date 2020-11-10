@@ -18,10 +18,7 @@
 import sys
 
 # force to register the operations to SDK Harness
-try:
-    import pyflink.fn_execution.fast_operations
-except ImportError:
-    import pyflink.fn_execution.operations
+import pyflink.fn_execution.beam.beam_operations # noqa # pylint: disable=unused-import
 
 # force to register the coders to SDK Harness
 import pyflink.fn_execution.beam.beam_coders # noqa # pylint: disable=unused-import

@@ -128,13 +128,17 @@ public class FactoryUtilTest {
 			"connector\n" +
 			"format\n" +
 			"key.format\n" +
+			"key.test-format.changelog-mode\n" +
 			"key.test-format.delimiter\n" +
 			"key.test-format.fail-on-missing\n" +
+			"key.test-format.readable-metadata\n" +
 			"property-version\n" +
 			"target\n" +
 			"value.format\n" +
+			"value.test-format.changelog-mode\n" +
 			"value.test-format.delimiter\n" +
-			"value.test-format.fail-on-missing");
+			"value.test-format.fail-on-missing\n" +
+			"value.test-format.readable-metadata");
 		testError(options -> {
 			options.put("this-is-not-consumed", "42");
 			options.put("this-is-also-not-consumed", "true");
@@ -237,7 +241,8 @@ public class FactoryUtilTest {
 			ObjectIdentifier.of("cat", "db", "table"),
 			new CatalogTableMock(options),
 			new Configuration(),
-			FactoryUtilTest.class.getClassLoader());
+			FactoryUtilTest.class.getClassLoader(),
+			false);
 	}
 
 	private static DynamicTableSink createTableSink(Map<String, String> options) {
@@ -246,7 +251,8 @@ public class FactoryUtilTest {
 			ObjectIdentifier.of("cat", "db", "table"),
 			new CatalogTableMock(options),
 			new Configuration(),
-			FactoryUtilTest.class.getClassLoader());
+			FactoryUtilTest.class.getClassLoader(),
+			false);
 	}
 
 	private static class CatalogTableMock implements CatalogTable {
@@ -279,6 +285,11 @@ public class FactoryUtilTest {
 
 		@Override
 		public Map<String, String> getProperties() {
+			return options;
+		}
+
+		@Override
+		public Map<String, String> getOptions() {
 			return options;
 		}
 
